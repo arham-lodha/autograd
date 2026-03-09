@@ -1,4 +1,5 @@
 from typing import List
+import numpy as np
 
 from tensor import Tensor
 
@@ -37,7 +38,8 @@ class Engine:
     def backward(self, tensor: Tensor, create_graph=False):
         topo = self.build_topo(tensor)
 
-        tensor.grad = 1.0
+        tensor.grad = Tensor(np.ones_like(tensor.data)
+                             ) if create_graph else np.ones_like(tensor.data)
 
         for node in reversed(topo):
             node.backward(node.grad, create_graph=create_graph)
@@ -45,4 +47,4 @@ class Engine:
     def zero_grad(self, tensor: Tensor):
         topo = self.build_topo(tensor)
         for node in topo:
-            node.grad = 0.0
+            node.grad = np.zeros_like(node.data)
