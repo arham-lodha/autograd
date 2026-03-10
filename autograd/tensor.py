@@ -174,6 +174,9 @@ class Tensor:
 
         return Tensor(np.log(self.data), operation=Operation.LOG, prev=[self])
 
+    def relu(self):
+        return Tensor(np.maximum(0, self.data), operation=Operation.RELU, prev=[self])
+
     def sum(self, axis: Optional[int] = None, keepdims: bool = False):
         out = Tensor(self.data.sum(axis=axis, keepdims=keepdims),
                      operation=Operation.SUM, prev=[self])
@@ -492,5 +495,12 @@ class Tensor:
                     (self * self.exp()) *
                     grad if create_graph else (
                         self.data * np.exp(self.data)) * grad,
+                    create_graph,
+                )
+
+            case Operation.RELU:
+                self.prev[0].grad = self._accumulate(
+                    self.prev[0].grad,
+                    ((self.data > 0) * grad) if create_graph else ((self.data > 0) * grad),
                     create_graph,
                 )

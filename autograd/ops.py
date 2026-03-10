@@ -18,3 +18,4 @@ class Operation(Enum):
     SWAP_AXIS = 14
     EXP = 15
     MEAN = 16
+    RELU = 17
