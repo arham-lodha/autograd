@@ -73,9 +73,11 @@ class Tensor:
         new_prev = []
 
         if not isinstance(other, Tensor):
+            new_scalar = other
 
             if self.operation == Operation.MULTIPLY and not self.retain:
                 new_prev.extend(self.prev)
+                new_scalar *= self._scalar
             else:
                 new_prev.append(self)
 
@@ -83,7 +85,7 @@ class Tensor:
                 self.data * other,
                 operation=Operation.MULTIPLY,
                 prev=new_prev,
-                scalar=other,
+                scalar=new_scalar,
             )
 
         new_prev = []
