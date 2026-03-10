@@ -207,6 +207,10 @@ class Tensor:
 
     def _accumulate(self, existing: Union['Tensor', np.ndarray], new_grad: Union['Tensor', np.ndarray], create_graph: bool):
 
+        if create_graph:
+            if not isinstance(existing, Tensor):
+                return new_grad
+
         return existing + new_grad
 
     def _grad_mul_scalar(self, grad: Union['Tensor', np.ndarray], create_graph: bool):
@@ -240,13 +244,8 @@ class Tensor:
         )
 
     def _unbroadcast(self, grad: Union['Tensor', np.ndarray], target_shape: tuple[int, ...]):
-        grad_shape = grad.shape
 
-        while len(grad_shape) > len(target_shape):
-            grad = grad.sum(axis=0)
-
-        added_dims = len(grad_shape) - len(target_shape)
-        for i in range(added_dims):
+        while len(grad.shape) > len(target_shape):
             grad = grad.sum(axis=0)
 
         for i, dim in enumerate(target_shape):
@@ -284,7 +283,10 @@ class Tensor:
                 if len(self.prev) == 1:
                     self.prev[0].grad = self._accumulate(
                         self.prev[0].grad,
-                        self._grad_mul_scalar(grad, create_graph),
+                        self._unbroadcast(
+                            self._grad_mul_scalar(grad, create_graph),
+                            self.prev[0].shape,
+                        ),
                         create_graph,
                     )
                 else:
@@ -293,9 +295,8 @@ class Tensor:
 
                         t.grad = self._accumulate(
                             t.grad,
-                            self._grad_mul_tensors(
-                                grad, others, create_graph
-                            ),
+                            self._unbroadcast(self._grad_mul_tensors(
+                                grad, others, create_graph), t.shape),
                             create_graph,
                         )
 
