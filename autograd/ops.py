@@ -19,3 +19,6 @@ class Operation(Enum):
     EXP = 15
     MEAN = 16
     RELU = 17
+    SOFTMAX = 18
+    VARIANCE = 19
+    CUSTOM = -1

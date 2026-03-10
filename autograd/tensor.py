@@ -1,4 +1,4 @@
-from typing import List, Optional, Union
+from typing import Callable, List, Optional, Union
 
 import numpy as np
 
@@ -37,6 +37,10 @@ class Tensor:
         # (axis, keepdims) or None, used for sum backward
         self.sum_metadata: Optional[tuple[Optional[int], bool]] = None
         self.swap_axis_metadata: Optional[tuple[int, int]] = None
+        self.softmax_data: Optional[tuple[int, np.ndarray]] = None
+
+        # type: Optional[Callable[[Union['Tensor', np.ndarray']], Union['Tensor', np.ndarray]]]
+        self.custom_grad_func = None
 
     @property
     def shape(self):
@@ -177,6 +181,15 @@ class Tensor:
     def relu(self):
         return Tensor(np.maximum(0, self.data), operation=Operation.RELU, prev=[self])
 
+    def softmax(self, axis: int = -1):
+        exp_data = np.exp(
+            self.data - np.max(self.data, axis=axis, keepdims=True))
+        softmax_data = exp_data / np.sum(exp_data, axis=axis, keepdims=True)
+
+        out = Tensor(softmax_data, operation=Operation.SOFTMAX, prev=[self])
+        out.softmax_data = (axis, softmax_data)
+        return out
+
     def sum(self, axis: Optional[int] = None, keepdims: bool = False):
         out = Tensor(self.data.sum(axis=axis, keepdims=keepdims),
                      operation=Operation.SUM, prev=[self])
@@ -187,6 +200,18 @@ class Tensor:
         out = Tensor(self.data.mean(axis=axis, keepdims=keepdims),
                      operation=Operation.MEAN, prev=[self])
         out.sum_metadata = (axis, keepdims)
+        return out
+
+    def variance(self, axis: Optional[int] = None, keepdims: bool = False):
+        mean = self.data.mean(axis=axis, keepdims=True)
+        out = Tensor(((self.data - mean) ** 2).mean(axis=axis, keepdims=keepdims),
+                     operation=Operation.VARIANCE, prev=[self])
+        out.sum_metadata = (axis, keepdims)
+        return out
+
+    def custom_op(self, func, grad_func):
+        out = Tensor(func(self.data), operation=Operation.CUSTOM, prev=[self])
+        out.custom_grad_func = grad_func
         return out
 
     def broadcast_to(self, shape: tuple[int, ...]):
@@ -461,6 +486,10 @@ class Tensor:
                 self.prev[0].grad = self._accumulate(
                     self.prev[0].grad, grad, create_graph)
 
+            case Operation.VARIANCE:
+                # TODO: Variance backward implementation
+                pass
+
             case Operation.BROADCAST_TO:
                 input_shape = self.prev[0].shape
 
@@ -504,3 +533,23 @@ class Tensor:
                     ((self.data > 0) * grad) if create_graph else ((self.data > 0) * grad),
                     create_graph,
                 )
+
+            case Operation.SOFTMAX:
+                axis, softmax_data = self.softmax_data if self.softmax_data is not None else (
+                    -1, np.array([]))
+                if create_graph:
+                    grad_input = self * grad - (self * grad).sum(
+                        axis=axis, keepdims=True) * self
+                else:
+                    grad_input = softmax_data * grad - (softmax_data * grad).sum(
+                        axis=axis, keepdims=True) * softmax_data
+
+                self.prev[0].grad = self._accumulate(
+                    self.prev[0].grad, grad_input, create_graph)
+
+            case Operation.CUSTOM:
+                if self.custom_grad_func is None:
+                    raise ValueError("Custom grad func not defined")
+                custom_grad = self.custom_grad_func(grad)
+                self.prev[0].grad = self._accumulate(
+                    self.prev[0].grad, custom_grad, create_graph)
