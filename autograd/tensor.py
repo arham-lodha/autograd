@@ -165,6 +165,9 @@ class Tensor:
     def transpose(self):
         return Tensor(self.data.T, operation=Operation.TRANSPOSE, prev=[self])
 
+    def exp(self):
+        return Tensor(np.exp(self.data), operation=Operation.EXP, prev=[self])
+
     def log(self):
         if np.any(self.data <= 0):
             raise ValueError("Cannot take log of non-positive values")
@@ -174,6 +177,12 @@ class Tensor:
     def sum(self, axis: Optional[int] = None, keepdims: bool = False):
         out = Tensor(self.data.sum(axis=axis, keepdims=keepdims),
                      operation=Operation.SUM, prev=[self])
+        out.sum_metadata = (axis, keepdims)
+        return out
+
+    def mean(self, axis: Optional[int] = None, keepdims: bool = False):
+        out = Tensor(self.data.mean(axis=axis, keepdims=keepdims),
+                     operation=Operation.MEAN, prev=[self])
         out.sum_metadata = (axis, keepdims)
         return out
 
@@ -429,6 +438,26 @@ class Tensor:
                 self.prev[0].grad = self._accumulate(
                     self.prev[0].grad, grad, create_graph)
 
+            case Operation.MEAN:
+                axis, keepdims = self.sum_metadata if self.sum_metadata is not None else (
+                    None, False)
+
+                input_shape = self.prev[0].shape
+                divisor = np.prod(
+                    input_shape) if axis is None else input_shape[axis]
+                if axis is not None and keepdims is False:
+                    if isinstance(grad, Tensor):
+                        grad = grad.expand_dims(axis)
+                    else:
+                        grad = np.expand_dims(grad, axis)
+                if isinstance(grad, Tensor):
+                    grad = grad.broadcast_to(input_shape) / divisor
+                else:
+                    grad = np.broadcast_to(grad, input_shape) / divisor
+
+                self.prev[0].grad = self._accumulate(
+                    self.prev[0].grad, grad, create_graph)
+
             case Operation.BROADCAST_TO:
                 input_shape = self.prev[0].shape
 
@@ -456,3 +485,12 @@ class Tensor:
                     grad.swap_axis(axis1, axis2) if isinstance(grad, Tensor) else np.swapaxes(
                         grad, axis1, axis2),
                     create_graph)
+
+            case Operation.EXP:
+                self.prev[0].grad = self._accumulate(
+                    self.prev[0].grad,
+                    (self * self.exp()) *
+                    grad if create_graph else (
+                        self.data * np.exp(self.data)) * grad,
+                    create_graph,
+                )

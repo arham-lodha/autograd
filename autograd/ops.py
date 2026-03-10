@@ -16,3 +16,5 @@ class Operation(Enum):
     EXPAND_DIMS = 12
     SQUEEZE = 13
     SWAP_AXIS = 14
+    EXP = 15
+    MEAN = 16
