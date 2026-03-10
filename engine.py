@@ -1,7 +1,7 @@
 from typing import List
 import numpy as np
 
-from tensor import Tensor
+from .tensor import Tensor
 
 
 class Engine:

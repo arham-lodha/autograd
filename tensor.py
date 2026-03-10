@@ -34,10 +34,17 @@ class Tensor:
         )
 
         self.retain: bool = retain
+        # (axis, keepdims) or None, used for sum backward
+        self.sum_metadata: Optional[tuple[Optional[int], bool]] = None
+        self.swap_axis_metadata: Optional[tuple[int, int]] = None
 
     @property
     def shape(self):
         return self.data.shape
+
+    @property
+    def T(self):
+        return self.transpose()
 
     def __add__(self, other: Union["Tensor", np.ndarray, float, int]):
         new_prev = []
@@ -135,16 +142,70 @@ class Tensor:
     def __neg__(self):
         return self * -1
 
-    def __log__(self):
+    # self @ other
+    def __matmul__(self, other: Union["Tensor", np.ndarray]):
+        if not isinstance(other, Tensor):
+            return Tensor(self.data @ other,
+                          operation=Operation.MATMUL, prev=[self], scalar=other)
+
+        return Tensor(self.data @ other.data,
+                      operation=Operation.MATMUL, prev=[self, other])
+
+    # other @ self
+    def __rmatmul__(self, other: Union["Tensor", np.ndarray]):
+        if not isinstance(other, Tensor):
+            return Tensor(other @ self.data,
+                          operation=Operation.RMATMUL, prev=[self], scalar=other)
+
+        return Tensor(other.data @ self.data,
+                      operation=Operation.RMATMUL, prev=[self, other])
+
+    def transpose(self):
+        return Tensor(self.data.T, operation=Operation.TRANSPOSE, prev=[self])
+
+    def log(self):
+        if np.any(self.data <= 0):
+            raise ValueError("Cannot take log of non-positive values")
+
         return Tensor(np.log(self.data), operation=Operation.LOG, prev=[self])
 
-    def _accumulate(self, existing: Union['Tensor', np.ndarray], new_grad: Union['Tensor', np.ndarray], create_graph: bool):
-        if existing is None:
-            return new_grad
-        elif create_graph:
-            return existing + new_grad
+    def sum(self, axis: Optional[int] = None, keepdims: bool = False):
+        out = Tensor(self.data.sum(axis=axis, keepdims=keepdims),
+                     operation=Operation.SUM, prev=[self])
+        out.sum_metadata = (axis, keepdims)
+        return out
 
-        return existing + (new_grad.data if isinstance(new_grad, Tensor) else new_grad)
+    def broadcast_to(self, shape: tuple[int, ...]):
+        out = Tensor(np.broadcast_to(self.data, shape).copy(),
+                     operation=Operation.BROADCAST_TO, prev=[self])
+        return out
+
+    def reshape(self, shape: tuple[int, ...]):
+        out = Tensor(self.data.reshape(shape),
+                     operation=Operation.RESHAPE, prev=[self])
+
+        return out
+
+    def expand_dims(self, axis: int):
+        out = Tensor(np.expand_dims(self.data, axis=axis),
+                     operation=Operation.EXPAND_DIMS, prev=[self])
+        return out
+
+    def squeeze(self, axis: Optional[int] = None):
+        out = Tensor(np.squeeze(self.data, axis=axis),
+                     operation=Operation.SQUEEZE, prev=[self])
+        # We can reuse expand_dims_metadata for squeeze since they are inverses
+        return out
+
+    def swap_axis(self, axis1: int, axis2: int):
+        out = Tensor(np.swapaxes(self.data, axis1, axis2),
+                     operation=Operation.SWAP_AXIS, prev=[self])
+        out.swap_axis_metadata = (axis1, axis2)
+        return out
+
+    def _accumulate(self, existing: Union['Tensor', np.ndarray], new_grad: Union['Tensor', np.ndarray], create_graph: bool):
+
+        return existing + new_grad
 
     def _grad_mul_scalar(self, grad: Union['Tensor', np.ndarray], create_graph: bool):
         if create_graph:
@@ -176,17 +237,46 @@ class Tensor:
             * self.pow_scalar
         )
 
+    def _unbroadcast(self, grad: Union['Tensor', np.ndarray], target_shape: tuple[int, ...]):
+        grad_shape = grad.shape
+
+        while len(grad_shape) > len(target_shape):
+            grad = grad.sum(axis=0)
+
+        added_dims = len(grad_shape) - len(target_shape)
+        for i in range(added_dims):
+            grad = grad.sum(axis=0)
+
+        for i, dim in enumerate(target_shape):
+            if dim == 1:
+                grad = grad.sum(axis=i, keepdims=True)
+
+        return grad
+
     def backward(self, grad: Union["Tensor", np.ndarray], create_graph=False):
 
-        if not create_graph and isinstance(grad, Tensor):
-            grad = grad.data
+        if create_graph:
+            if not isinstance(grad, Tensor):
+                raise ValueError(
+                    "grad must be a Tensor when create_graph=True")
+        else:
+            if isinstance(grad, Tensor):
+                grad = grad.data  # normalize
+
+        # validate shape regardless of create_graph
+        grad_shape = grad.shape  # works for both Tensor and ndarray since both have .shape
+        if grad_shape != self.data.shape:
+            raise ValueError(
+                f"grad shape {grad_shape} does not match data shape {self.data.shape}"
+            )
 
         match self.operation:
             case Operation.CONSTANT:
                 pass
             case Operation.ADD:
                 for t in self.prev:
-                    t.grad = self._accumulate(t.grad, grad, create_graph)
+                    t.grad = self._accumulate(
+                        t.grad, self._unbroadcast(grad, t.shape), create_graph)
 
             case Operation.MULTIPLY:
                 if len(self.prev) == 1:
@@ -225,7 +315,7 @@ class Tensor:
                     self.prev[1].grad = self._accumulate(
                         self.prev[1].grad,
                         (
-                            grad * a.__log__() * (a**b)
+                            grad * a.log() * (a**b)
                             if create_graph
                             else grad
                             * np.log(a.data)
@@ -251,3 +341,115 @@ class Tensor:
                     ),
                     create_graph,
                 )
+            case Operation.TRANSPOSE:
+                self.prev[0].grad = self._accumulate(
+                    self.prev[0].grad,
+                    grad.transpose() if create_graph else grad.T,
+                    create_graph,
+                )
+            case Operation.MATMUL:
+                # self @ other
+                if len(self.prev) != 2:
+
+                    a = self.prev[0]
+                    grad_a = (grad @ np.swapaxes(self._scalar, -1, -2)
+                              )
+
+                    self.prev[0].grad = self._accumulate(
+                        self.prev[0].grad,
+                        self._unbroadcast(grad_a, a.shape),
+                        create_graph,
+                    )
+                else:
+                    a, b = self.prev
+
+                    grad_a = (grad @ b.swap_axis(-1, -2)
+                              ) if create_graph else (grad @ np.swapaxes(b.data, -1, -2))
+
+                    grad_b = (a.swap_axis(-1, -2) @
+                              grad) if create_graph else (np.swapaxes(a.data, -1, -2) @ grad)
+
+                    self.prev[0].grad = self._accumulate(
+                        self.prev[0].grad,
+                        self._unbroadcast(grad_a, a.shape),
+                        create_graph,
+                    )
+                    self.prev[1].grad = self._accumulate(
+                        self.prev[1].grad,
+                        self._unbroadcast(grad_b, b.shape),
+                        create_graph,
+                    )
+            case Operation.RMATMUL:
+                # other @ self
+                if len(self.prev) != 2:
+                    self.prev[0].grad = self._accumulate(
+                        self.prev[0].grad,
+                        np.swapaxes(self._scalar, -1, -2) @
+                        grad,
+                        create_graph,
+                    )
+                else:
+                    a, b = self.prev
+
+                    grad_a = (
+                        b.swap_axis(-1, -2) @ grad) if create_graph else (np.swapaxes(b.data, -1, -2) @ grad)
+                    grad_b = (grad @ a.swap_axis(-1, -2)
+                              ) if create_graph else (grad @ np.swapaxes(a.data, -1, -2))
+
+                    self.prev[0].grad = self._accumulate(
+                        self.prev[0].grad,
+                        self._unbroadcast(grad_a, a.shape),
+                        create_graph,
+                    )
+                    self.prev[1].grad = self._accumulate(
+                        self.prev[1].grad,
+                        self._unbroadcast(grad_b, b.shape),
+                        create_graph,
+                    )
+            case Operation.SUM:
+                axis, keepdims = self.sum_metadata if self.sum_metadata is not None else (
+                    None, False)
+
+                input_shape = self.prev[0].shape
+
+                if axis is not None and keepdims is False:
+                    if isinstance(grad, Tensor):
+                        grad = grad.expand_dims(axis)
+                    else:
+                        grad = np.expand_dims(grad, axis)
+
+                if isinstance(grad, Tensor):
+                    grad = grad.broadcast_to(input_shape)
+                else:
+                    grad = np.broadcast_to(grad, input_shape)
+
+                self.prev[0].grad = self._accumulate(
+                    self.prev[0].grad, grad, create_graph)
+
+            case Operation.BROADCAST_TO:
+                input_shape = self.prev[0].shape
+
+                self.prev[0].grad = self._accumulate(
+                    self.prev[0].grad, self._unbroadcast(grad, input_shape), create_graph)
+
+            case Operation.RESHAPE:
+                self.prev[0].grad = self._accumulate(
+                    self.prev[0].grad, grad.reshape(self.prev[0].shape), create_graph)
+
+            case Operation.EXPAND_DIMS:
+                self.prev[0].grad = self._accumulate(
+                    self.prev[0].grad, grad.reshape(self.prev[0].shape), create_graph)
+            case Operation.SQUEEZE:
+                self.prev[0].grad = self._accumulate(
+                    self.prev[0].grad,
+                    grad.reshape(self.prev[0].shape),
+                    create_graph
+                )
+            case Operation.SWAP_AXIS:
+                axis1, axis2 = self.swap_axis_metadata if self.swap_axis_metadata is not None else (
+                    0, 0)
+                self.prev[0].grad = self._accumulate(
+                    self.prev[0].grad,
+                    grad.swap_axis(axis1, axis2) if isinstance(grad, Tensor) else np.swapaxes(
+                        grad, axis1, axis2),
+                    create_graph)
