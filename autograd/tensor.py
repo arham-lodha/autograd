@@ -487,8 +487,28 @@ class Tensor:
                     self.prev[0].grad, grad, create_graph)
 
             case Operation.VARIANCE:
-                # TODO: Variance backward implementation
-                pass
+                axis, keepdims = self.sum_metadata if self.sum_metadata is not None else (
+                    None, False)
+                x = self.prev[0]
+                # number of elements reduced to get each output element
+                N = x.data.size / self.data.size
+
+                mu = x.data.mean(axis=axis, keepdims=True)
+
+                grad_reshaped = grad
+
+                if not keepdims and axis is not None:
+                    axes = (axis,) if isinstance(axis, int) else axis
+                    new_shape = list(x.data.shape)
+
+                    for ax in axes:
+                        new_shape[ax] = 1
+                    grad_reshaped = grad.reshape(tuple(new_shape))
+
+                if create_graph:
+                    grad_input = (2.0 / N) * (x - mu) * grad_reshaped
+                else:
+                    grad_input = (2.0 / N) * (x.data - mu) * grad_reshaped
 
             case Operation.BROADCAST_TO:
                 input_shape = self.prev[0].shape
