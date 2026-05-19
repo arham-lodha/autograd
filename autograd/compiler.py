@@ -464,6 +464,12 @@ class Compiler:
                         continue
 
             new_topo.append(node)
+        
+        actual_root = get_actual(topo[-1])
+
+        if id(new_topo[-1]) != id(actual_root):
+            new_topo = [n for n in new_topo if id(n) != id(actual_root)];
+            new_topo.append(actual_root)
 
         return new_topo, changed
 

@@ -55,11 +55,6 @@ class TestConstantFolding:
 
 
 class TestAlgebraicSimplification:
-    # NOTE: tests that simplify the root node wrap in .sum() to work around a
-    # DCE ordering bug: when _algebraic_simplification removes the root from
-    # new_topo, DCE incorrectly picks the wrong last node as the live root.
-    # The .sum() wrapper ensures there is always an un-simplified root node.
-
     def test_add_zero_right(self):
         x = make_var(np.array([1.0, 2.0]))
         result = _run(x + make_const(0.0), {x: np.array([1.0, 2.0])})
@@ -67,8 +62,8 @@ class TestAlgebraicSimplification:
 
     def test_add_zero_left(self):
         x = make_var(np.array([3.0]))
-        result = _run((make_const(0.0) + x).sum(), {x: np.array([3.0])})
-        np.testing.assert_allclose(result, 3.0)
+        result = _run(make_const(0.0) + x, {x: np.array([3.0])})
+        np.testing.assert_allclose(result, [3.0])
 
     def test_mul_by_one(self):
         x = make_var(np.array([5.0]))
@@ -92,19 +87,19 @@ class TestAlgebraicSimplification:
 
     def test_log_exp_cancels(self):
         x = make_var(np.array([2.0]))
-        result = _run(x.exp().log().sum(), {x: np.array([2.0])})
-        np.testing.assert_allclose(result, 2.0)
+        result = _run(x.exp().log(), {x: np.array([2.0])})
+        np.testing.assert_allclose(result, [2.0])
 
     def test_exp_log_cancels(self):
         x = make_var(np.array([2.0]))
-        result = _run(x.log().exp().sum(), {x: np.array([2.0])})
-        np.testing.assert_allclose(result, 2.0)
+        result = _run(x.log().exp(), {x: np.array([2.0])})
+        np.testing.assert_allclose(result, [2.0])
 
     def test_double_transpose_cancels(self):
         x = make_var(np.array([[1.0, 2.0], [3.0, 4.0]]))
         val = np.array([[1.0, 2.0], [3.0, 4.0]])
-        result = _run(x.transpose().transpose().sum(), {x: val})
-        np.testing.assert_allclose(result, val.sum())
+        result = _run(x.transpose().transpose(), {x: val})
+        np.testing.assert_allclose(result, val)
 
     def test_relu_relu_idempotent(self):
         x = make_var(np.array([-1.0, 0.0, 2.0]))
@@ -114,7 +109,7 @@ class TestAlgebraicSimplification:
 
     def test_double_transpose_reduces_topo(self):
         x = make_var(np.array([[1.0, 2.0]]))
-        topo = Compiler().compile(x.transpose().transpose().sum())
+        topo = Compiler().compile(x.transpose().transpose())
         ops = [n.operation for n in topo]
         assert Operation.TRANSPOSE not in ops
 
@@ -193,8 +188,7 @@ class TestOptimizationPreservesValues:
                     lambda rng: [rng.standard_normal((4,)) * 0.5], rng)
 
     def test_log_exp(self, rng):
-        # Wrap in .sum() so the simplified root node is not the graph root
-        self._check(lambda x: (x.exp()).log().sum(),
+        self._check(lambda x: x.exp().log(),
                     lambda rng: [np.abs(rng.standard_normal((4,))) + 0.1], rng)
 
     def test_matmul_with_transpose(self, rng):
