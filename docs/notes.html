@@ -242,6 +242,18 @@
         <a href="#s2">Next steps — symbolic backward pass</a>
         <span class="toc-date">2026-05-17</span>
       </li>
+      <li>
+        <a href="#s3">Executor fixes &amp; design decisions</a>
+        <span class="toc-date">2026-05-18</span>
+      </li>
+      <li>
+        <a href="#s4">Test suite migration &amp; bugs found</a>
+        <span class="toc-date">2026-05-18</span>
+      </li>
+      <li>
+        <a href="#s5">Backward pass — all bugs fixed</a>
+        <span class="toc-date">2026-05-19</span>
+      </li>
     </ol>
   </nav>
 
@@ -256,9 +268,8 @@
     </div>
     <div class="entry-body">
       <p>
-        Returning to the project after a break. Two execution modes exist:
-        the <strong>eager mode</strong> (<code>Tensor</code> + <code>Engine</code>) is a legacy prototype, complete and tested but no longer the active codebase.
-        The <strong>symbolic/compiled mode</strong> (<code>Symbol</code> + <code>Compiler</code> + <code>Executor</code>) is the current version.
+        The <strong>symbolic/compiled mode</strong> (<code>Symbol</code> + <code>Compiler</code> + <code>Executor</code>) is the only active codebase.
+        The old <strong>eager mode</strong> (<code>Tensor</code> + <code>Engine</code>) is a deprecated prototype — files have been moved to <code>autograd/eager/</code> and should not be treated as reference or oracle.
       </p>
 
       <div class="subsection">
@@ -274,9 +285,9 @@
         <h3>Known bugs / incomplete</h3>
         <ul class="item-list">
           <li><span class="bullet bullet-red"></span><code>Compiler._accumulate()</code> — reassigns a local variable instead of mutating, so gradients never accumulate</li>
-          <li><span class="bullet bullet-red"></span><code>Executor.forward()</code> line 150 — <code>if node in topo[-1]</code> is nonsensical, will crash at runtime</li>
+          <li><span class="bullet bullet-green"></span><code>Executor.forward()</code> caching condition — fixed, now uses <code>index == len(topo) - 1</code></li>
           <li><span class="bullet bullet-yellow"></span><code>compile_backwards()</code> — <code>SOFTMAX</code> case references undefined <code>axis</code> variable</li>
-          <li><span class="bullet bullet-yellow"></span><code>Executor</code> — no <code>backward()</code> method yet, only forward</li>
+          <li><span class="bullet bullet-green"></span><code>Executor.backward()</code> — resolved: not needed (see s3)</li>
         </ul>
       </div>
     </div>
@@ -298,17 +309,172 @@
         <li><span class="bullet bullet-accent"></span><strong>1. Fix <code>Compiler._accumulate()</code></strong> — one-liner bug, but blocks everything downstream</li>
         <li><span class="bullet bullet-accent"></span><strong>2. Fix <code>Executor.forward()</code></strong> — the bad <code>if node in topo[-1]</code> check will crash before any backward can run</li>
         <li><span class="bullet bullet-accent"></span><strong>3. Verify <code>compile_backwards()</code> end-to-end</strong> — once 1 &amp; 2 are fixed, run the symbolic backward and diff against the eager mode as a reference oracle</li>
-        <li><span class="bullet bullet-accent"></span><strong>4. Add <code>Executor.backward()</code></strong> — execute the gradient graph that <code>compile_backwards()</code> produces</li>
-        <li><span class="bullet bullet-accent"></span><strong>5. Tests</strong> — existing tests all target the eager mode; need equivalent coverage for the symbolic pipeline</li>
+        <li><span class="bullet bullet-green"></span><strong>4. <code>Executor.backward()</code></strong> — resolved: not needed. The gradient graph from <code>compile_backwards()</code> is just another symbolic graph; <code>Executor.forward()</code> executes it directly (see s3)</li>
+        <li><span class="bullet bullet-accent"></span><strong>5. Tests</strong> — existing tests all target the deprecated eager mode; need equivalent coverage for the symbolic pipeline</li>
       </ul>
 
       <div class="subsection">
         <h3>Open design question</h3>
         <p>
-          For step 4: does <code>Executor.backward()</code> treat the gradient graph as a static compiled artifact (run once, reuse), or does it recompile on each backward call?
-          This affects how intermediate activations are stored and whether the backward graph needs its own caching strategy.
+          Resolved — <code>Executor.backward()</code> is not needed at all. The backward graph is executed via <code>Executor.forward()</code> directly (see s3).
         </p>
       </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s3">
+    <div class="entry-header">
+      <div class="entry-index">3</div>
+      <div class="entry-meta">
+        <h2><a href="#s3">Executor fixes &amp; design decisions</a></h2>
+        <div class="date">2026-05-18</div>
+      </div>
+    </div>
+    <div class="entry-body">
+
+      <div class="subsection">
+        <h3>Bugs fixed in Executor.py</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-green"></span><code>ADD</code> and <code>MULTIPLY</code> cases had no <code>return results</code> — silently returned <code>None</code> at runtime. Fixed by adding explicit returns.</li>
+          <li><span class="bullet bullet-green"></span><code>GREATER_THAN</code> / <code>LESS_THAN</code> used <code>np.all()</code>, collapsing the comparison to a single scalar boolean. Fixed to return element-wise boolean arrays (<code>inputs[0] &gt; inputs[1]</code>), consistent with all other shape-preserving ops.</li>
+          <li><span class="bullet bullet-green"></span><code>SIZE</code> was a stub (<code>pass</code>). Fixed: now uses <code>np.size(inputs[0], kwargs.get('axis'))</code> wrapped as a 0-d <code>np.ndarray</code>. The original broken version wrapped in a list, producing a 1-element 1-D array instead of a scalar.</li>
+        </ul>
+      </div>
+
+      <div class="subsection">
+        <h3>Type annotation fixes</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-green"></span><code>_eval_node</code> return type changed from <code>NonSymbolInputs</code> to <code>np.ndarray</code> — every branch either returns an array or raises.</li>
+          <li><span class="bullet bullet-green"></span><code>_get_value</code> return type changed from <code>NonSymbolInputs</code> to <code>np.ndarray</code> — it hits the cache (typed <code>Dict[int, np.ndarray]</code>), returns <code>node.value</code> after a <code>is not None</code> guard, or raises. Never returns <code>None</code>.</li>
+          <li><span class="bullet bullet-green"></span><code>inputs: list[np.ndarray]</code> annotation in <code>_eval_node</code> is now correct given the above.</li>
+        </ul>
+      </div>
+
+      <div class="subsection">
+        <h3>Key design decision — no Executor.backward()</h3>
+        <p>
+          <code>Compiler.compile_backwards()</code> symbolically differentiates the forward graph and produces a new <code>topo</code> list of <code>Symbol</code> nodes representing the gradient computations.
+          That gradient graph is structurally identical to a forward graph, so <code>Executor.forward()</code> executes it directly — no separate <code>backward()</code> method is needed or appropriate.
+          This is a fundamental property of symbolic differentiation: the backward pass <em>is</em> a forward pass over a different graph.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>Eager mode status</h3>
+        <p>
+          Deprecated. Files moved to <code>autograd/eager/</code>. Do not use as a reference oracle or test target going forward — all new tests should target the symbolic pipeline.
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s4">
+    <div class="entry-header">
+      <div class="entry-index">4</div>
+      <div class="entry-meta">
+        <h2><a href="#s4">Test suite migration &amp; bugs found</a></h2>
+        <div class="date">2026-05-18</div>
+      </div>
+    </div>
+    <div class="entry-body">
+
+      <div class="subsection">
+        <h3>Migration</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-green"></span>All old eager tests moved to <code>tests/eager/</code>; imports updated to <code>autograd.eager</code>. 98 tests still pass.</li>
+          <li><span class="bullet bullet-green"></span><code>autograd/__init__.py</code> updated to export the symbolic API (<code>Symbol</code>, <code>Compiler</code>, <code>Executor</code>). <code>autograd/eager/__init__.py</code> created so the eager subpackage is importable.</li>
+          <li><span class="bullet bullet-green"></span><code>autograd/eager/tensor.py</code> import fixed: <code>from .ops</code> → <code>from ..ops</code> (ops lives in the parent package).</li>
+        </ul>
+      </div>
+
+      <div class="subsection">
+        <h3>New symbolic test suite — 130 tests</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-accent"></span><code>tests/test_symbol.py</code> — graph construction, operator overloads, <code>requires_grad</code> inference</li>
+          <li><span class="bullet bullet-accent"></span><code>tests/test_compiler.py</code> — constant folding, algebraic simplification, canonicalization/decanonicalization, DCE, end-to-end value correctness</li>
+          <li><span class="bullet bullet-accent"></span><code>tests/test_executor.py</code> — forward pass for every operation; also added missing <code>BROADCAST_TO_MATCH</code> and <code>UNBROADCAST</code> cases to <code>Executor._eval_node</code></li>
+          <li><span class="bullet bullet-accent"></span><code>tests/test_backward_symbolic.py</code> — analytical gradients vs central finite differences for every op</li>
+        </ul>
+      </div>
+
+      <div class="subsection">
+        <h3>Bugs found by the test suite (all marked <code>xfail</code>)</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-red"></span><strong>NEG backward missing</strong> — <code>_backwards_node</code> has no <code>NEG</code> case. Decanonicalization converts <code>MULTIPLY(-1, x)</code> → <code>NEG</code>, so any subtraction whose second operand requires grad silently drops its gradient. Fix: add <code>case Operation.NEG: arg.grad = _accumulate(arg.grad, -grad)</code>.</li>
+          <li><span class="bullet bullet-red"></span><strong>SQRT backward missing</strong> — no <code>SQRT</code> case in <code>_backwards_node</code>. Affects <code>x.sqrt()</code> and <code>x ** 0.5</code> (both decanonicalize to SQRT). Fix: <code>arg.grad = _accumulate(arg.grad, grad / (2 * node))</code>.</li>
+          <li><span class="bullet bullet-red"></span><strong>TRANSPOSE backward missing</strong> — no <code>TRANSPOSE</code> case. Fix: <code>arg.grad = _accumulate(arg.grad, grad.transpose())</code>.</li>
+          <li><span class="bullet bullet-red"></span><strong>RESHAPE / EXPAND_DIMS / SQUEEZE / SWAP_AXIS backward missing</strong> — none of these shape ops have backward cases. Fixes are straightforward inverses: reshape back, squeeze/expand, swap axes again.</li>
+          <li><span class="bullet bullet-red"></span><strong>MATMUL backward uses <code>*</code> instead of <code>@</code></strong> — <code>compiler.py</code> line ~658: <code>grad * b.transpose()</code> and <code>a.transpose() * grad</code> should both use <code>@</code>. Element-wise multiply produces wrong shapes and wrong values.</li>
+          <li><span class="bullet bullet-yellow"></span><strong>SUM / MEAN axis backward incomplete</strong> — after <code>expand_dims</code> the gradient is not broadcast back to the input shape, so the gradient has the wrong shape for axis reductions without <code>keepdims</code>.</li>
+          <li><span class="bullet bullet-yellow"></span><strong>DCE ordering bug (compiler)</strong> — when <code>_algebraic_simplification</code> eliminates the root node (e.g. <code>log(exp(x))</code> → <code>x</code>), it removes it from <code>new_topo</code> without ensuring the replacement is last. DCE then selects the wrong node as the live root. Workaround in tests: wrap root-level simplifications in an outer <code>.sum()</code>.</li>
+        </ul>
+      </div>
+
+      <div class="subsection">
+        <h3>Current test count (as of s4)</h3>
+        <p>
+          <code>tests/</code>: 110 passed, 20 xfailed (0 failures) &nbsp;|&nbsp;
+          <code>tests/eager/</code>: 98 passed
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s5">
+    <div class="entry-header">
+      <div class="entry-index">5</div>
+      <div class="entry-meta">
+        <h2><a href="#s5">Backward pass — all bugs fixed</a></h2>
+        <div class="date">2026-05-19</div>
+      </div>
+    </div>
+    <div class="entry-body">
+
+      <div class="subsection">
+        <h3>New operation: RESHAPE_LIKE</h3>
+        <p>
+          Added <code>RESHAPE_LIKE(x, ref)</code> to <code>ops.py</code>, <code>symbol.py</code>, <code>Executor._eval_node</code>, and <code>Compiler._eval_map</code>.
+          Mirrors the <code>BROADCAST_TO_MATCH</code> / <code>UNBROADCAST</code> pattern: uses the <em>runtime</em> shape of <code>ref</code> so the original shape doesn't need to be known at compile_backwards time.
+          Its own backward is <code>grad.reshape_like(inp)</code> — it is its own inverse.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>Fixes in _backwards_node</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-green"></span><strong>RESHAPE</strong> — <code>grad.reshape_like(inp)</code></li>
+          <li><span class="bullet bullet-green"></span><strong>EXPAND_DIMS</strong> — <code>grad.squeeze(axis)</code> (axis known from kwargs)</li>
+          <li><span class="bullet bullet-green"></span><strong>SQUEEZE</strong> — <code>grad.expand_dims(axis)</code> for specified axis; <code>grad.reshape_like(inp)</code> for <code>axis=None</code></li>
+          <li><span class="bullet bullet-green"></span><strong>SWAP_AXIS</strong> — <code>grad.swap_axis(axis1, axis2)</code> (its own inverse)</li>
+          <li><span class="bullet bullet-green"></span><strong>SUM axis backward</strong> — added <code>.broadcast_to_match(inp)</code> after <code>expand_dims</code>; the expanded gradient was previously left at the reduced shape instead of being broadcast back to the full input shape. This fix also unblocked the MEAN axis backward (which received a correctly-shaped upstream gradient as a result).</li>
+          <li><span class="bullet bullet-green"></span><strong>ADD broadcasting</strong> — changed <code>grad</code> → <code>grad.unbroadcast(p)</code> for each ADD input. Without this, broadcasting across an ADD (e.g. <code>x - x.mean(keepdims=True)</code>) passed the full-shaped gradient to a smaller-shaped node, producing wrong gradients.</li>
+          <li><span class="bullet bullet-green"></span><strong>NEG / SQRT / TRANSPOSE requires_grad guard</strong> — these three cases accumulated gradients without first checking <code>prev[0].requires_grad</code>.</li>
+        </ul>
+      </div>
+
+      <div class="subsection">
+        <h3>MATMUL 1D input fix (Executor)</h3>
+        <p>
+          <code>W @ x</code> where <code>x</code> is 1D (shape <code>(k,)</code>) works in the forward pass.
+          In the backward, <code>grad_W = grad @ x.T</code> fails because numpy's transpose of a 1D array is a no-op, so the executor received <code>(m,) @ (k,)</code> — an invalid matmul.
+          The correct result is <code>np.outer(grad, x)</code>.
+          Fix: in <code>Executor._eval_node</code> MATMUL case, when both inputs are 1D, use <code>np.outer</code> instead of <code>@</code>.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>Current test count</h3>
+        <p>
+          <code>tests/</code>: 130 passed, 0 xfailed (0 failures) &nbsp;|&nbsp;
+          <code>tests/eager/</code>: 98 passed
+        </p>
+      </div>
+
     </div>
   </section>
 

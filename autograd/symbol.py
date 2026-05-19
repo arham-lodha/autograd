@@ -149,6 +149,9 @@ class Symbol:
     def unbroadcast(self, other: Inputs) -> 'Symbol':
         return Symbol(operation=Operation.UNBROADCAST, prev=[self, self._ensure_symbol(other)])
 
+    def reshape_like(self, other: Inputs) -> 'Symbol':
+        return Symbol(operation=Operation.RESHAPE_LIKE, prev=[self, self._ensure_symbol(other)])
+
     def size(self, axis=None) -> 'Symbol':
         return Symbol(operation=Operation.SIZE, prev=[self], axis=axis)
 

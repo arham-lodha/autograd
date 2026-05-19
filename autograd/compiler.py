@@ -43,7 +43,8 @@ class Compiler:
             Operation.SIZE: lambda x, axis=None: np.array(x.shape[axis] if isinstance(axis, int) else np.prod([x.shape[a] for a in axis]) if axis is not None else x.size),
             Operation.BROADCAST_TO_MATCH: lambda x, y: np.broadcast_to(x, y.shape),
             Operation.UNBROADCAST: lambda x, y: _unbroadcast(x, y.shape),
-            Operation.LESS_THAN: lambda x, y: x < y
+            Operation.LESS_THAN: lambda x, y: x < y,
+            Operation.RESHAPE_LIKE: lambda x, y: x.reshape(y.shape),
         }
 
     def _build_topo(self, symbol: Symbol) -> List[Symbol]:
@@ -608,8 +609,8 @@ class Compiler:
         match node.operation:
             case Operation.ADD:
                 for p in prev:
-                    if (p.requires_grad):
-                        p.grad = self._accumulate(p.grad, grad)
+                    if p.requires_grad:
+                        p.grad = self._accumulate(p.grad, grad.unbroadcast(p))
             case Operation.MULTIPLY:
                 for index, parent in enumerate(prev):
                     if (parent.requires_grad):
@@ -656,10 +657,10 @@ class Compiler:
                 a, b = prev
 
                 if a.requires_grad:
-                    a.grad = self._accumulate(a.grad, grad * b.transpose())
+                    a.grad = self._accumulate(a.grad, grad @ b.transpose())
 
                 if b.requires_grad:
-                    b.grad = self._accumulate(b.grad, a.transpose() * grad)
+                    b.grad = self._accumulate(b.grad, a.transpose() @ grad)
 
             case Operation.SUM:
                 axis = kwargs.get('axis')
@@ -671,7 +672,7 @@ class Compiler:
                     if not keepdims and axis is not None:
                         new_grad = new_grad.expand_dims(axis)
 
-                    inp.grad = self._accumulate(inp.grad, new_grad)
+                    inp.grad = self._accumulate(inp.grad, new_grad.broadcast_to_match(inp))
 
             case Operation.MEAN:
                 axis = kwargs.get('axis')
@@ -741,3 +742,36 @@ class Compiler:
                 pass
             case Operation.LESS_THAN:
                 pass
+            case Operation.NEG:
+                if prev[0].requires_grad:
+                    prev[0].grad = self._accumulate(prev[0].grad, -grad)
+            case Operation.SQRT:
+                if prev[0].requires_grad:
+                    prev[0].grad = self._accumulate(prev[0].grad, grad / (2 * node))
+            case Operation.TRANSPOSE:
+                if prev[0].requires_grad:
+                    prev[0].grad = self._accumulate(prev[0].grad, grad.transpose())
+            case Operation.RESHAPE_LIKE:
+                inp = prev[0]
+                if inp.requires_grad:
+                    inp.grad = self._accumulate(inp.grad, grad.reshape_like(inp))
+            case Operation.RESHAPE:
+                inp = prev[0]
+                if inp.requires_grad:
+                    inp.grad = self._accumulate(inp.grad, grad.reshape_like(inp))
+            case Operation.EXPAND_DIMS:
+                inp = prev[0]
+                if inp.requires_grad:
+                    inp.grad = self._accumulate(inp.grad, grad.squeeze(kwargs['axis']))
+            case Operation.SQUEEZE:
+                inp = prev[0]
+                if inp.requires_grad:
+                    axis = kwargs.get('axis')
+                    if axis is not None:
+                        inp.grad = self._accumulate(inp.grad, grad.expand_dims(axis))
+                    else:
+                        inp.grad = self._accumulate(inp.grad, grad.reshape_like(inp))
+            case Operation.SWAP_AXIS:
+                inp = prev[0]
+                if inp.requires_grad:
+                    inp.grad = self._accumulate(inp.grad, grad.swap_axis(kwargs['axis1'], kwargs['axis2']))

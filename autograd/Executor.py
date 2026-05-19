@@ -4,6 +4,7 @@ import numpy as np
 
 from .symbol import NonSymbolInputs, Symbol
 from .ops import Operation
+from .compiler import _unbroadcast
 
 
 class Executor:
@@ -76,7 +77,10 @@ class Executor:
             case Operation.LOG:
                 return np.log(inputs[0])
             case Operation.MATMUL:
-                return inputs[0] @ inputs[1]
+                a, b = inputs
+                if a.ndim == 1 and b.ndim == 1:
+                    return np.outer(a, b)
+                return a @ b
             case Operation.TRANSPOSE:
                 return inputs[0].T
             case Operation.SUM:
@@ -110,6 +114,15 @@ class Executor:
 
             case Operation.SWAP_AXIS:
                 return np.swapaxes(inputs[0], kwargs['axis1'], kwargs['axis2'])
+            case Operation.BROADCAST_TO_MATCH:
+                return np.broadcast_to(inputs[0], inputs[1].shape)
+
+            case Operation.UNBROADCAST:
+                return _unbroadcast(inputs[0], inputs[1].shape)
+
+            case Operation.RESHAPE_LIKE:
+                return inputs[0].reshape(inputs[1].shape)
+
             case Operation.GREATER_THAN:
                 return inputs[0] > inputs[1];
             case Operation.LESS_THAN:

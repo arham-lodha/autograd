@@ -33,3 +33,4 @@ class Operation(Enum):
     BROADCAST_TO_MATCH = 29
     UNBROADCAST = 30
     LESS_THAN = 31
+    RESHAPE_LIKE = 32
