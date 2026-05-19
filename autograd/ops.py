@@ -34,3 +34,4 @@ class Operation(Enum):
     UNBROADCAST = 30
     LESS_THAN = 31
     RESHAPE_LIKE = 32
+    SIGN=33

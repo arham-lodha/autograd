@@ -129,6 +129,8 @@ class Executor:
                 return inputs[0] < inputs[1];
             case Operation.SIZE:
                 return np.array(np.size(inputs[0], kwargs.get('axis')))
+            case Operation.SIGN:
+                return np.sign(inputs[0])
             case _:
                 raise RuntimeError(f"Unknown operation: {node.operation}")
 

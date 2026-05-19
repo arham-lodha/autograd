@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Union
+from typing import Any,  List, Optional, Union
 
 import numpy as np
 
@@ -160,3 +160,6 @@ class Symbol:
 
     def __lt__(self, other: Inputs) -> 'Symbol':
         return Symbol(operation=Operation.LESS_THAN, prev=[self, self._ensure_symbol(other)])
+
+    def sign(self) -> 'Symbol':
+        return Symbol(operation=Operation.SIGN, prev=[self]);

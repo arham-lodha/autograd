@@ -45,6 +45,7 @@ class Compiler:
             Operation.UNBROADCAST: lambda x, y: _unbroadcast(x, y.shape),
             Operation.LESS_THAN: lambda x, y: x < y,
             Operation.RESHAPE_LIKE: lambda x, y: x.reshape(y.shape),
+            Operation.SIGN: np.sign
         }
 
     def _build_topo(self, symbol: Symbol) -> List[Symbol]:
@@ -781,3 +782,11 @@ class Compiler:
                 inp = prev[0]
                 if inp.requires_grad:
                     inp.grad = self._accumulate(inp.grad, grad.swap_axis(kwargs['axis1'], kwargs['axis2']))
+
+            case Operation.SIGN:
+                pass
+            
+            case Operation.ABS:
+                inp = prev[0]
+                if inp.requires_grad:
+                    inp.grad = self._accumulate(inp.grad, grad * inp.sign())
