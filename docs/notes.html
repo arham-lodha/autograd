@@ -254,6 +254,14 @@
         <a href="#s5">Backward pass — all bugs fixed</a>
         <span class="toc-date">2026-05-19</span>
       </li>
+      <li>
+        <a href="#s6">DCE ordering bug fixed</a>
+        <span class="toc-date">2026-05-19</span>
+      </li>
+      <li>
+        <a href="#s7">Next steps</a>
+        <span class="toc-date">2026-05-19</span>
+      </li>
     </ol>
   </nav>
 
@@ -473,6 +481,134 @@
           <code>tests/</code>: 130 passed, 0 xfailed (0 failures) &nbsp;|&nbsp;
           <code>tests/eager/</code>: 98 passed
         </p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s6">
+    <div class="entry-header">
+      <div class="entry-index">6</div>
+      <div class="entry-meta">
+        <h2><a href="#s6">DCE ordering bug fixed</a></h2>
+        <div class="date">2026-05-19</div>
+      </div>
+    </div>
+    <div class="entry-body">
+
+      <div class="subsection">
+        <h3>The bug</h3>
+        <p>
+          When <code>_algebraic_simplification</code> eliminated the root node (e.g. <code>log(exp(x))</code> → <code>x</code>),
+          it removed the root from <code>new_topo</code> without ensuring the replacement ended up last.
+          <code>_dead_code_elimination</code> always treats <code>topo[-1]</code> as the live root, so it picked
+          the wrong node — in the <code>log(exp(x))</code> case, <code>EXP(x)</code> ended up last and was treated
+          as the root, so the executor returned <code>exp(x)</code> instead of <code>x</code>.
+          The bug was order-dependent: <code>x + 0</code> passed by coincidence (x was last) but <code>0 + x</code>
+          failed (0 was last).
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>The fix</h3>
+        <p>
+          After the simplification loop in <code>_algebraic_simplification</code>, resolve the actual root
+          via <code>get_actual(topo[-1])</code> and move it to the end of <code>new_topo</code> if it isn't already last.
+          DCE then correctly identifies the replacement as the live root and eliminates the now-dead intermediate nodes (e.g. <code>EXP(x)</code>).
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>Note on non-adjacent inverses</h3>
+        <p>
+          This fix only applies after a simplification rule fires. It does <em>not</em> handle cases where
+          f and f⁻¹ are not directly composed (e.g. <code>log(c * exp(x))</code>). Local rewrite rules
+          require the pair to be structurally adjacent; general inverse cancellation through commutative
+          or associative operations would require a more powerful approach (e.g. e-graphs / equality saturation).
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>Test cleanup</h3>
+        <p>
+          Removed <code>.sum()</code> wrappers and the workaround comment from <code>tests/test_compiler.py</code>.
+          Root-level simplification tests (<code>log(exp(x))</code>, <code>T(T(x))</code>, <code>0+x</code>, etc.)
+          now assert directly on the simplified value.
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s7">
+    <div class="entry-header">
+      <div class="entry-index">7</div>
+      <div class="entry-meta">
+        <h2><a href="#s7">Next steps</a></h2>
+        <div class="date">2026-05-19</div>
+      </div>
+    </div>
+    <div class="entry-body">
+      <p>The symbolic backend is complete and fully tested. Priorities for what comes next:</p>
+
+      <div class="subsection">
+        <h3>1 — User-facing API (highest priority)</h3>
+        <p>
+          The library has no usable interface. To compute a gradient today you must manually call
+          <code>Compiler.compile(..., backwards=True)</code>, <code>Executor.forward()</code>,
+          <code>compiler.compile(sym.grad)</code>, and <code>Executor.forward()</code> again.
+          The goal is a <code>grad(f)</code> function that hides all of this.
+        </p>
+        <p>
+          Design: <code>grad(f)</code> is the expensive step — it uses <code>inspect.signature</code>
+          to determine how many arguments <code>f</code> takes, creates one <code>VARIABLE</code> Symbol per argument,
+          calls <code>f(*syms)</code> to trace the graph (no values needed — operator overloads build the structure),
+          compiles the forward graph, runs <code>compile_backwards</code>, and compiles each gradient graph.
+          All compiled topos are captured in a closure.
+        </p>
+        <p>
+          The returned <code>df(*values)</code> is cheap — it just runs <code>executor.forward</code>
+          on the pre-compiled forward topo (to populate node values), then runs <code>executor.forward</code>
+          on each pre-compiled gradient topo, and returns the list of gradient arrays.
+          No recompilation on each call.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>2 — ABS backward missing</h3>
+        <p>
+          Every differentiable op now has a backward rule except <code>ABS</code>.
+          Gradient is <code>sign(x)</code> — a one-liner to add to <code>_backwards_node</code>.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>3 — End-to-end workload validation</h3>
+        <p>
+          The test suite verifies individual ops numerically but nothing has been run as a full
+          training loop. Fitting a linear regression or a small MLP (forward + backward + gradient
+          descent update) would surface any integration bugs that unit tests miss.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>4 — Executor copy mode</h3>
+        <p>
+          <code>executor.forward</code> currently sets <code>node.value</code> in-place on Symbol objects shared between the forward and gradient topos.
+          A future <code>copy=True</code> parameter would write results only to <code>self._cache</code> and leave <code>node.value</code> untouched,
+          so grad evaluations never corrupt forward node values between calls.
+          Deferred until after the user-facing API is in place.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>5 — Longer term</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-accent"></span><strong>Second-order gradients</strong> — the infrastructure is clean enough that differentiating through the gradient graph is feasible, but needs the user-facing API to be solid first.</li>
+          <li><span class="bullet bullet-accent"></span><strong>Optimizer primitives</strong> — SGD, Adam etc. are just graph operations, but depend on the API wrapper to be useful.</li>
+        </ul>
       </div>
 
     </div>
