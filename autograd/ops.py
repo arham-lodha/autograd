@@ -27,4 +27,9 @@ class Operation(Enum):
     SUB = 22
     SQRT = 24
     IDENTITY = 25
-    CUSTOM = -1
+    ABS = 26
+    GREATER_THAN = 27
+    SIZE = 28
+    BROADCAST_TO_MATCH = 29
+    UNBROADCAST = 30
+    LESS_THAN = 31

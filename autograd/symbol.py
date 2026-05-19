@@ -11,7 +11,7 @@ type NonSymbolInputs = Union[float, int, np.ndarray, list]
 class Symbol:
     def __init__(
         self,
-        value: Optional[Union[float, int, np.ndarray, list]] = None,
+        value: Optional[NonSymbolInputs] = None,
         operation: Operation = Operation.CONSTANT,
         prev: Optional[List['Symbol']] = None,
         name: Optional[str] = None,
@@ -23,6 +23,7 @@ class Symbol:
         self.prev = prev if prev is not None else []
         self.name = name
         self.retain = retain
+        self.grad: Optional['Symbol'] = None
         self.kwargs = kwargs
 
         if value is not None:
@@ -30,6 +31,7 @@ class Symbol:
                 value, np.ndarray) else np.array(value)
         else:
             self.value = None
+
 
         if self.prev:
             self.requires_grad = any(
@@ -126,7 +128,7 @@ class Symbol:
     def reshape(self, shape: tuple) -> 'Symbol':
         return Symbol(operation=Operation.RESHAPE, prev=[self], shape=shape)
 
-    def expand_dims(self, axis: int) -> 'Symbol':
+    def expand_dims(self, axis) -> 'Symbol':
         return Symbol(operation=Operation.EXPAND_DIMS, prev=[self], axis=axis)
 
     def squeeze(self, axis: Optional[int] = None) -> 'Symbol':
@@ -137,3 +139,21 @@ class Symbol:
 
     def sqrt(self) -> 'Symbol':
         return Symbol(operation=Operation.SQRT, prev=[self])
+
+    def abs(self) -> 'Symbol':
+        return Symbol(operation=Operation.ABS, prev=[self])
+
+    def broadcast_to_match(self, other: Inputs) -> 'Symbol':
+        return Symbol(operation=Operation.BROADCAST_TO_MATCH, prev=[self, self._ensure_symbol(other)])
+
+    def unbroadcast(self, other: Inputs) -> 'Symbol':
+        return Symbol(operation=Operation.UNBROADCAST, prev=[self, self._ensure_symbol(other)])
+
+    def size(self, axis=None) -> 'Symbol':
+        return Symbol(operation=Operation.SIZE, prev=[self], axis=axis)
+
+    def __gt__(self, other: Inputs) -> 'Symbol':
+        return Symbol(operation=Operation.GREATER_THAN, prev=[self, self._ensure_symbol(other)])
+
+    def __lt__(self, other: Inputs) -> 'Symbol':
+        return Symbol(operation=Operation.LESS_THAN, prev=[self, self._ensure_symbol(other)])

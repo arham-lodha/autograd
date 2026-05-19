@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Autograd — Dev Notes</title>
+  <style>
+    :root {
+      --bg:         #0f1117;
+      --surface:    #1a1d27;
+      --border:     #2a2d3a;
+      --accent:     #7c6af7;
+      --accent-dim: #3d3570;
+      --text:       #d4d8f0;
+      --muted:      #6b7094;
+      --tag-bg:     #1f2235;
+      --tag-text:   #9b93ff;
+      --code-bg:    #13151f;
+      --green:      #4ade80;
+      --yellow:     #facc15;
+      --red:        #f87171;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+      font-size: 15px;
+      line-height: 1.7;
+      padding: 48px 24px;
+    }
+
+    .page {
+      max-width: 820px;
+      margin: 0 auto;
+    }
+
+    /* ── Header ── */
+    .site-header {
+      margin-bottom: 56px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 28px;
+    }
+    .site-header h1 {
+      font-size: 26px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -0.5px;
+    }
+    .site-header p {
+      color: var(--muted);
+      margin-top: 6px;
+      font-size: 14px;
+    }
+
+    /* ── TOC ── */
+    .toc {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px 24px;
+      margin-bottom: 48px;
+    }
+    .toc h2 {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+    .toc ol {
+      padding-left: 20px;
+    }
+    .toc li {
+      margin: 5px 0;
+    }
+    .toc a {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 14px;
+    }
+    .toc a:hover { text-decoration: underline; }
+    .toc .toc-date {
+      color: var(--muted);
+      font-size: 12px;
+      margin-left: 8px;
+    }
+
+    /* ── Entry ── */
+    .entry {
+      margin-bottom: 56px;
+      scroll-margin-top: 24px;
+    }
+
+    .entry-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .entry-index {
+      flex-shrink: 0;
+      width: 32px;
+      height: 32px;
+      background: var(--accent-dim);
+      color: var(--accent);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 700;
+      margin-top: 2px;
+    }
+    .entry-meta h2 {
+      font-size: 19px;
+      font-weight: 650;
+      color: #fff;
+      letter-spacing: -0.3px;
+    }
+    .entry-meta .date {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 3px;
+    }
+
+    .entry-body {
+      border-left: 2px solid var(--border);
+      padding-left: 24px;
+      margin-left: 16px;
+    }
+
+    .entry-body p { margin-bottom: 12px; }
+    .entry-body p:last-child { margin-bottom: 0; }
+
+    /* ── Subsections ── */
+    .subsection {
+      margin-top: 20px;
+    }
+    .subsection h3 {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    /* ── Item list ── */
+    .item-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .item-list li {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 14px;
+    }
+    .item-list li .bullet {
+      flex-shrink: 0;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      margin-top: 7px;
+    }
+    .bullet-green  { background: var(--green); }
+    .bullet-yellow { background: var(--yellow); }
+    .bullet-red    { background: var(--red); }
+    .bullet-accent { background: var(--accent); }
+
+    /* ── Code ── */
+    code {
+      font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 13px;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 6px;
+      color: #b8c0e8;
+    }
+
+    /* ── Divider ── */
+    .entry + .entry {
+      border-top: 1px solid var(--border);
+      padding-top: 48px;
+    }
+
+    /* ── Ref chip ── */
+    .ref-chip {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--tag-bg);
+      color: var(--tag-text);
+      border: 1px solid var(--accent-dim);
+      border-radius: 4px;
+      padding: 1px 7px;
+      font-family: 'JetBrains Mono', monospace;
+      letter-spacing: 0.3px;
+      text-decoration: none;
+    }
+    .ref-chip:hover { background: var(--accent-dim); }
+
+    /* ── Anchor icon ── */
+    .entry-meta h2 a {
+      color: inherit;
+      text-decoration: none;
+    }
+    .entry-meta h2 a:hover::after {
+      content: ' #';
+      color: var(--accent);
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <header class="site-header">
+    <h1>Autograd — Dev Notes</h1>
+    <p>Architecture decisions, next steps, and session notes. Reference a section with its ID chip in conversation.</p>
+  </header>
+
+  <nav class="toc">
+    <h2>Contents</h2>
+    <ol>
+      <li>
+        <a href="#s1">Project orientation &amp; codebase state</a>
+        <span class="toc-date">2026-05-17</span>
+      </li>
+      <li>
+        <a href="#s2">Next steps — symbolic backward pass</a>
+        <span class="toc-date">2026-05-17</span>
+      </li>
+    </ol>
+  </nav>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s1">
+    <div class="entry-header">
+      <div class="entry-index">1</div>
+      <div class="entry-meta">
+        <h2><a href="#s1">Project orientation &amp; codebase state</a></h2>
+        <div class="date">2026-05-17</div>
+      </div>
+    </div>
+    <div class="entry-body">
+      <p>
+        Returning to the project after a break. Two execution modes exist:
+        the <strong>eager mode</strong> (<code>Tensor</code> + <code>Engine</code>) is a legacy prototype, complete and tested but no longer the active codebase.
+        The <strong>symbolic/compiled mode</strong> (<code>Symbol</code> + <code>Compiler</code> + <code>Executor</code>) is the current version.
+      </p>
+
+      <div class="subsection">
+        <h3>Symbolic pipeline — what's done</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-green"></span><code>symbol.py</code> — full operator-overloaded graph builder, mirrors the old Tensor API</li>
+          <li><span class="bullet bullet-green"></span><code>compiler.py</code> — optimization pipeline: canonicalization, constant folding, add/mul flattening, algebraic simplification, dead code elimination, decanonicalization</li>
+          <li><span class="bullet bullet-green"></span><code>Executor.py</code> — forward execution of a compiled topo list, with selective caching</li>
+        </ul>
+      </div>
+
+      <div class="subsection">
+        <h3>Known bugs / incomplete</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-red"></span><code>Compiler._accumulate()</code> — reassigns a local variable instead of mutating, so gradients never accumulate</li>
+          <li><span class="bullet bullet-red"></span><code>Executor.forward()</code> line 150 — <code>if node in topo[-1]</code> is nonsensical, will crash at runtime</li>
+          <li><span class="bullet bullet-yellow"></span><code>compile_backwards()</code> — <code>SOFTMAX</code> case references undefined <code>axis</code> variable</li>
+          <li><span class="bullet bullet-yellow"></span><code>Executor</code> — no <code>backward()</code> method yet, only forward</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s2">
+    <div class="entry-header">
+      <div class="entry-index">2</div>
+      <div class="entry-meta">
+        <h2><a href="#s2">Next steps — symbolic backward pass</a></h2>
+        <div class="date">2026-05-17</div>
+      </div>
+    </div>
+    <div class="entry-body">
+      <p>Priority order for getting the symbolic backward pass working end-to-end:</p>
+
+      <ul class="item-list">
+        <li><span class="bullet bullet-accent"></span><strong>1. Fix <code>Compiler._accumulate()</code></strong> — one-liner bug, but blocks everything downstream</li>
+        <li><span class="bullet bullet-accent"></span><strong>2. Fix <code>Executor.forward()</code></strong> — the bad <code>if node in topo[-1]</code> check will crash before any backward can run</li>
+        <li><span class="bullet bullet-accent"></span><strong>3. Verify <code>compile_backwards()</code> end-to-end</strong> — once 1 &amp; 2 are fixed, run the symbolic backward and diff against the eager mode as a reference oracle</li>
+        <li><span class="bullet bullet-accent"></span><strong>4. Add <code>Executor.backward()</code></strong> — execute the gradient graph that <code>compile_backwards()</code> produces</li>
+        <li><span class="bullet bullet-accent"></span><strong>5. Tests</strong> — existing tests all target the eager mode; need equivalent coverage for the symbolic pipeline</li>
+      </ul>
+
+      <div class="subsection">
+        <h3>Open design question</h3>
+        <p>
+          For step 4: does <code>Executor.backward()</code> treat the gradient graph as a static compiled artifact (run once, reuse), or does it recompile on each backward call?
+          This affects how intermediate activations are stored and whether the backward graph needs its own caching strategy.
+        </p>
+      </div>
+    </div>
+  </section>
+
+</div>
+</body>
+</html>

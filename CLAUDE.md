@@ -1,0 +1,52 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Collaboration style
+
+- Default to giving advice, architectural guidance, and next-step recommendations — not writing code — unless explicitly asked.
+- Writing tests is an exception: do write them when asked.
+- When the user says "update the HTML file", append the important recent decisions/advice to `docs/notes.html`. The file should be a complete, well-styled HTML document — embedded CSS, good typography, color, spacing, clear section headings, date stamps. If the file doesn't exist, create it with a full HTML skeleton. If it does exist, add new dated `<section>` entries and update the TOC.
+- Each section must have a short anchor ID (e.g. `id="s3"`) so the user can reference it in future conversations by saying something like "see s2". When the user references a section ID, look it up in `docs/notes.html` for context.
+- Only update the file when explicitly told to, not during normal conversation.
+
+## Commands
+
+```bash
+# Install in editable mode (required once)
+pip install -e ".[test]"
+
+# Run all tests
+pytest
+
+# Run a single test file
+pytest tests/test_backward.py
+
+# Run a single test class or function
+pytest tests/test_backward.py::TestAddBackward::test_scalar_add
+
+# Run slow/stress tests (excluded by default)
+pytest cases/ -m slow
+
+# Skip slow tests explicitly
+pytest -m "not slow"
+```
+
+## Architecture
+
+This is a NumPy-based automatic differentiation library. The **symbolic/compiled mode is the current version**. The eager mode (`Tensor` + `Engine` in `autograd/tensor.py` and `autograd/engine.py`) is a legacy prototype kept in a subdirectory — do not treat it as the active codebase.
+
+### Current: Symbolic / compiled mode (`Symbol` + `Compiler` + `Executor`)
+- **`autograd/symbol.py`** — `Symbol` builds a pure computation graph with no values attached. It mirrors the old `Tensor` API but stores only operations and `prev` links. Extra kwargs (e.g., `axis`, `keepdims`, `shape`) are stored in `node.kwargs`.
+- **`autograd/compiler.py`** — `Compiler.compile()` runs a fixed-point optimization loop over the graph: canonicalization (NEG→MUL(-1), SUB→ADD+MUL, SQRT→POW(0.5)), constant folding, addition/multiplication flattening, algebraic simplification (x+0, x*1, x^0, log(exp(x)), etc.), dead code elimination, then decanonicalization. `compile_backwards()` symbolically differentiates the compiled graph.
+- **`autograd/Executor.py`** — `Executor.forward()` runs a compiled `topo` list, evaluating each node via a `match` on `Operation` and caching intermediate values for nodes that need gradients.
+- **`autograd/ops.py`** — `Operation` enum shared across the codebase.
+
+### Key design patterns
+- **ADD/MULTIPLY flattening**: `Compiler._fold_addition`/`_fold_multiplication` collapse chains of the same operation into a single n-ary node. The `retain=True` flag on a `Symbol` prevents it from being absorbed into its parent.
+- **`_unbroadcast`**: Gradient un-broadcasting to handle shape mismatches from NumPy broadcasting.
+- Operation kwargs (e.g., `axis`, `keepdims`, `shape`) are stored in `node.kwargs` on the `Symbol` and passed through to the `Executor` at runtime.
+
+### Tests
+- `tests/` — unit tests for the eager mode; `conftest.py` provides the `engine` fixture and a `numerical_grad` central-differences helper used to verify analytical gradients.
+- `cases/` — stress/performance tests marked `@pytest.mark.slow`, excluded from the default `pytest` run.

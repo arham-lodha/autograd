@@ -1,9 +1,24 @@
-from typing import List, Dict, Callable, Set, Tuple
+from typing import List, Dict, Callable, Optional, Tuple
 import numpy as np
 from collections import Counter
 
 from .ops import Operation
-from .symbol import NonSymbolInputs, Symbol, Inputs
+from .symbol import NonSymbolInputs, Symbol
+
+
+def _unbroadcast(grad, target_shape):
+    if grad.shape == target_shape:
+        return grad
+    if target_shape == () or target_shape == (1,):
+        return np.sum(grad).reshape(target_shape)
+    padded = (1,) * (len(grad.shape) - len(target_shape)) + target_shape
+    reduce_axes = [i for i, (g, t) in enumerate(
+        zip(grad.shape, padded)) if t == 1 and g != 1]
+    if reduce_axes:
+        grad = np.sum(grad, axis=tuple(reduce_axes), keepdims=True)
+    if len(grad.shape) > len(target_shape):
+        grad = grad.reshape(target_shape)
+    return grad
 
 
 class Compiler:
@@ -22,7 +37,13 @@ class Compiler:
             Operation.NEG: lambda x: -x,
             Operation.SUB: lambda x, y: x - y,
             Operation.SQRT: np.sqrt,
-            Operation.IDENTITY: lambda x: x
+            Operation.IDENTITY: lambda x: x,
+            Operation.ABS: np.abs,
+            Operation.GREATER_THAN: lambda x, y: x > y,
+            Operation.SIZE: lambda x, axis=None: np.array(x.shape[axis] if isinstance(axis, int) else np.prod([x.shape[a] for a in axis]) if axis is not None else x.size),
+            Operation.BROADCAST_TO_MATCH: lambda x, y: np.broadcast_to(x, y.shape),
+            Operation.UNBROADCAST: lambda x, y: _unbroadcast(x, y.shape),
+            Operation.LESS_THAN: lambda x, y: x < y
         }
 
     def _build_topo(self, symbol: Symbol) -> List[Symbol]:
@@ -80,6 +101,11 @@ class Compiler:
                 new_topo.append(neg_one)
                 new_topo.append(multiply_node)
                 changed = True
+            elif node.operation is Operation.SQRT:
+                one_half_node = self._make_constant(0.5)
+                node.operation = Operation.POWER
+                node.prev = node.prev + [one_half_node]
+                new_topo.append(one_half_node)
 
             new_topo.append(node)
 
@@ -108,6 +134,8 @@ class Compiler:
                         node.value = node_value
                         node.prev = []
                         node.requires_grad = False
+
+                    changed = True
                 folded_topo.append(node)
                 continue
 
@@ -329,6 +357,7 @@ class Compiler:
                 case Operation.POWER:
                     base, exp = node.prev
                     # If the exponent is zero, we can simplify to one
+                    # x^0 = 1
                     if exp.operation == Operation.CONSTANT and np.all(exp.value == 0):
                         one_const = self._make_constant(1)
                         new_topo.append(one_const)
@@ -338,8 +367,10 @@ class Compiler:
                             new_topo.append(node)
 
                         continue
+
                     # If the exponent is one, we can simplify to the base
-                    elif exp.operation == Operation.CONSTANT and np.all(exp.value == 1):
+                    # x^1 = x
+                    if exp.operation == Operation.CONSTANT and np.all(exp.value == 1):
                         changed = True
 
                         if not self._try_replace(node, base, replacements):
@@ -347,16 +378,7 @@ class Compiler:
 
                         continue
 
-                    elif exp.operation == Operation.CONSTANT and exp.value is not None:
-                        # if exponent is 2, 3, 4, we can simplify to multiplication
-                        e = exp.value
-
-                        if np.all(e == int(e.flat[0])) and 2 <= int(e.flat[0]) <= 4:
-                            n = int(e.flat[0])
-                            node.operation = Operation.MULTIPLY
-                            node.prev = [base] * n
-                            changed = True
-                    elif base.operation == Operation.CONSTANT and np.all(base.value == 1):
+                    if base.operation == Operation.CONSTANT and np.all(base.value == 1):
                         # If the base is 1, we can simplify to 1
                         one_const = self._make_constant(1)
                         new_topo.append(one_const)
@@ -366,7 +388,8 @@ class Compiler:
                             new_topo.append(node)
 
                         continue
-                    elif base.operation == Operation.POWER:
+
+                    if base.operation == Operation.POWER:
                         # If the base is also a power, we can simplify (x^a)^b to x^(a*b)
                         inner_base, inner_exp = base.prev
                         new_exp = Symbol(operation=Operation.MULTIPLY, prev=[
@@ -374,6 +397,19 @@ class Compiler:
                         node.prev = [inner_base, new_exp]
                         new_topo.append(new_exp)
                         changed = True
+
+                    base, exp = node.prev
+
+                    if exp.operation == Operation.CONSTANT and exp.value is not None:
+                        # if exponent is 2, 3, 4, we can simplify to multiplication
+                        e = exp.value
+
+                        if np.all(e == int(e.flat[0])) and 2 <= int(e.flat[0]) <= 4:
+                            n = int(e.flat[0])
+                            node.operation = Operation.MULTIPLY
+                            node.prev = [base] * n
+                            changed = True
+
                 case Operation.LOG:
                     arg = node.prev[0]
                     if arg.operation == Operation.EXP:
@@ -383,6 +419,21 @@ class Compiler:
                             new_topo.append(node)
 
                         continue
+
+                    if arg.operation == Operation.POWER:
+                        base, exp = arg.prev
+
+                        node.operation = Operation.MULTIPLY
+                        abs_base = Symbol(operation=Operation.ABS, prev=[base])
+                        log_node = Symbol(
+                            operation=Operation.LOG, prev=[abs_base])
+
+                        node.prev = [exp, log_node]
+
+                        new_topo.append(abs_base)
+                        new_topo.append(log_node)
+                        changed = True
+
                 case Operation.EXP:
                     arg = node.prev[0]
                     if arg.operation == Operation.LOG:
@@ -440,6 +491,7 @@ class Compiler:
     def _decanonicalize(self, topo: List[Symbol]) -> Tuple[List[Symbol], bool]:
         # Convert canonical expressions back to decanonical representations
         # If you have an element with multiplication with negative 1 convert to negation.
+        # If you have something raised to the 1/2 power, make it into square root.
 
         new_topo: List[Symbol] = []
         changed = False
@@ -480,11 +532,19 @@ class Compiler:
                             node.prev = operands
                         else:
                             node.prev = operands
+
+            if node.operation == Operation.POWER:
+                base, exp = node.prev
+
+                if exp.operation == Operation.CONSTANT and exp.value is not None and np.all(exp.value == 0.5):
+                    node.operation = Operation.SQRT
+                    node.prev = [base]
+
             new_topo.append(node)
 
         return new_topo, changed
 
-    def compile(self, symbol: Symbol, max_iterations: int = 10, skip_optimization: bool = False) -> List[Symbol]:
+    def compile(self, symbol: Symbol, max_iterations: int = 10, skip_optimization: bool = False, backwards: bool = False) -> List[Symbol]:
 
         topo: List[Symbol] = self._build_topo(symbol)
 
@@ -518,4 +578,166 @@ class Compiler:
 
             if changed:
                 topo, changed = self._dead_code_elimination(topo)
+
+        if backwards:
+            self.compile_backwards(topo)
+
         return topo
+
+    def compile_backwards(self, topo: List[Symbol]):
+        for node in topo:
+            node.grad = None
+
+        topo[-1].grad = self._make_constant(1.0)
+        for node in reversed(topo):
+            self._backwards_node(node)
+
+    def _accumulate(self, existing: Optional[Symbol], grad: Symbol):
+        return grad if not existing else existing + grad;
+
+    def _backwards_node(self, node: Symbol):
+
+        if node.operation in (Operation.CONSTANT, Operation.VARIABLE, Operation.PLACEHOLDER):
+            return
+        
+        assert node.grad is not None, f"no gradient reached {node} - check topo order." 
+
+        grad = node.grad;
+        prev = node.prev
+        kwargs = node.kwargs
+        match node.operation:
+            case Operation.ADD:
+                for p in prev:
+                    if (p.requires_grad):
+                        p.grad = self._accumulate(p.grad, grad)
+            case Operation.MULTIPLY:
+                for index, parent in enumerate(prev):
+                    if (parent.requires_grad):
+                        others = [p for j, p in enumerate(
+                            prev) if j != index] + [grad]
+                        parent.grad = self._accumulate(
+                            parent.grad,
+                            Symbol(operation=Operation.MULTIPLY, prev=others)
+                        )
+            case Operation.POWER:
+                
+                assert len(prev) == 2, "Power operation requires two input elements."
+
+                base, exp = prev
+                if base.requires_grad:
+                    grad_base = exp * (base ** (exp - 1))
+                    base.grad = self._accumulate(base.grad, grad_base * grad)
+
+                if exp.requires_grad:
+                    grad_exp = node * base.log()
+                    exp.grad = self._accumulate(exp.grad, grad_exp * grad)
+
+            case Operation.EXP:
+                arg = prev[0]
+
+                if arg.requires_grad:
+                    arg.grad = self._accumulate(
+                        arg.grad, node * grad)
+
+            case Operation.LOG:
+                arg = prev[0]
+
+                if arg.requires_grad:
+                    arg.grad = self._accumulate(arg.grad, 1.0/arg * grad)
+
+            case Operation.IDENTITY:
+                arg = prev[0]
+
+                if arg.requires_grad:
+                    arg.grad = self._accumulate(arg.grad, grad)
+
+            case Operation.MATMUL:
+                assert len(prev) == 2, f"MATMUL requires two input parameters."
+                a, b = prev
+
+                if a.requires_grad:
+                    a.grad = self._accumulate(a.grad, grad * b.transpose())
+
+                if b.requires_grad:
+                    b.grad = self._accumulate(b.grad, a.transpose() * grad)
+
+            case Operation.SUM:
+                axis = kwargs.get('axis')
+                keepdims = kwargs.get('keepdims', False)
+                inp = prev[0]
+
+                if inp.requires_grad:
+                    new_grad = grad
+                    if not keepdims and axis is not None:
+                        new_grad = new_grad.expand_dims(axis)
+
+                    inp.grad = self._accumulate(inp.grad, new_grad)
+
+            case Operation.MEAN:
+                axis = kwargs.get('axis')
+                keepdims = kwargs.get('keepdims', False)
+                inp = prev[0]
+
+                if inp.requires_grad:
+                    new_grad = grad
+
+                    if not keepdims and axis is not None:
+                        new_grad = grad.expand_dims(axis)
+
+                    n = inp.size(axis)
+
+                    inp.grad = self._accumulate(
+                        inp.grad, new_grad.broadcast_to_match(inp) / n)
+            case Operation.VARIANCE:
+                axis = kwargs.get('axis')
+                keepdims = kwargs.get('keepdims', False)
+                inp = prev[0]
+
+                if inp.requires_grad:
+                    new_grad = grad
+
+                    if not keepdims and axis is not None:
+                        new_grad = grad.expand_dims(axis)
+
+                    n = inp.size(axis)
+                    mean = inp.mean(axis=axis, keepdims=True)
+
+                    inp.grad = self._accumulate(
+                        inp.grad, new_grad.broadcast_to_match(inp) * 2.0 * (inp - mean) * (1/n))
+            case Operation.SOFTMAX:
+                arg = prev[0]
+                axis = kwargs.get('axis');
+
+                if arg.requires_grad:
+                    # TODO CHECK THIS
+                    node_times_grad = node * grad
+                    arg.grad = self._accumulate(arg.grad, node_times_grad -
+                                     node_times_grad.sum(axis=axis, keepdims=True) * node)
+
+            case Operation.BROADCAST_TO:
+                inp = prev[0]
+
+                if inp.requires_grad:
+                    inp.grad = self._accumulate(inp.grad, grad.unbroadcast(inp))
+            case Operation.BROADCAST_TO_MATCH:
+                inp = prev[0]
+                # prev[1] is the shape reference — no grad needed for it
+                if inp.requires_grad:
+                    inp.grad = self._accumulate(inp.grad, grad.unbroadcast(inp))
+
+            case Operation.UNBROADCAST:
+                inp = prev[0]
+                if inp.requires_grad:
+                    inp.grad = self._accumulate(inp.grad, grad.broadcast_to_match(inp))
+            case Operation.RELU:
+                arg = prev[0]
+
+                if arg.requires_grad:
+                    mask = arg > 0.0
+                    arg.grad = self._accumulate(arg.grad, grad * mask)
+            case Operation.GREATER_THAN:
+                pass
+            case Operation.SIZE:
+                pass
+            case Operation.LESS_THAN:
+                pass
