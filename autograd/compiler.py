@@ -607,7 +607,10 @@ class Compiler:
 
         if node.operation in (Operation.CONSTANT, Operation.VARIABLE, Operation.PLACEHOLDER):
             return
-        
+
+        if not node.requires_grad:
+            return
+
         assert node.grad is not None, f"no gradient reached {node} - check topo order." 
 
         grad = node.grad;

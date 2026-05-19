@@ -1,4 +1,4 @@
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, Union
 import inspect
 
 import numpy as np
@@ -11,6 +11,7 @@ from .Executor import Executor
 
 def grad(
     f: Callable[..., Symbol],
+    argnums: Optional[Union[int, Tuple[int, ...]]] = None,
     compiler: Optional[Compiler] = None,
     executor: Optional[Executor] = None,
 ) -> Tuple[Callable[..., List[np.ndarray]], Callable[..., np.ndarray]]:
@@ -20,16 +21,31 @@ def grad(
         executor = Executor()
 
     num_args: int = len(inspect.signature(f).parameters)
+
+    # Normalise argnums: default is all arguments
+    if argnums is None:
+        active: set[int] = set(range(num_args))
+    elif isinstance(argnums, int):
+        active = {argnums}
+    else:
+        active = set(argnums)
+
+    # VARIABLE for differentiated args, PLACEHOLDER for the rest
     syms: List[Symbol] = [
         Symbol(operation=Operation.VARIABLE, requires_grad=True)
-        for _ in range(num_args)
+        if i in active
+        else Symbol(operation=Operation.PLACEHOLDER, requires_grad=False)
+        for i in range(num_args)
     ]
+
     evaluation_tree: Symbol = f(*syms)
 
     forward_topo: List[Symbol] = compiler.compile(evaluation_tree, backwards=True)
 
+    # Only compile gradient topos for active (VARIABLE) symbols
+    active_syms: List[Symbol] = [syms[i] for i in sorted(active)]
     grad_topos: List[List[Symbol]] = []
-    for sym in syms:
+    for sym in active_syms:
         assert sym.grad is not None, "No gradient for input symbol — check requires_grad"
         grad_topos.append(compiler.compile(sym.grad, skip_optimization=True))
 

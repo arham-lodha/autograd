@@ -262,6 +262,10 @@
         <a href="#s7">Next steps</a>
         <span class="toc-date">2026-05-19</span>
       </li>
+      <li>
+        <a href="#s8">grad API, SIGN op, ABS backward fix</a>
+        <span class="toc-date">2026-05-19</span>
+      </li>
     </ol>
   </nav>
 
@@ -609,6 +613,56 @@
           <li><span class="bullet bullet-accent"></span><strong>Second-order gradients</strong> — the infrastructure is clean enough that differentiating through the gradient graph is feasible, but needs the user-facing API to be solid first.</li>
           <li><span class="bullet bullet-accent"></span><strong>Optimizer primitives</strong> — SGD, Adam etc. are just graph operations, but depend on the API wrapper to be useful.</li>
         </ul>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s8">
+    <div class="entry-header">
+      <div class="entry-index">8</div>
+      <div class="entry-meta">
+        <h2><a href="#s8">grad API, SIGN op, ABS backward fix</a></h2>
+        <div class="date">2026-05-19</div>
+      </div>
+    </div>
+    <div class="entry-body">
+
+      <div class="subsection">
+        <h3>grad API — autograd/grad.py</h3>
+        <p>
+          <code>grad(f)</code> is the compile-time step: uses <code>inspect.signature</code> to determine
+          the number of arguments, creates one <code>VARIABLE</code> Symbol per argument, calls <code>f(*syms)</code>
+          to trace the graph (no values needed — operator overloads build structure), compiles the forward graph
+          with <code>backwards=True</code>, and compiles each input's gradient graph.
+          All topos are captured in a closure.
+        </p>
+        <p>
+          Returns <code>(df, evalf)</code>. <code>df(*values)</code> runs forward once to populate node values,
+          then evaluates each pre-compiled gradient topo — no recompilation per call.
+          <code>evalf(*values)</code> just runs the forward topo.
+          Exported from <code>autograd.__init__</code>.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>SIGN operation</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-green"></span>Added <code>SIGN = 33</code> to <code>ops.py</code></li>
+          <li><span class="bullet bullet-green"></span>Added <code>sign()</code> method to <code>Symbol</code></li>
+          <li><span class="bullet bullet-green"></span>Added <code>np.sign</code> to <code>Executor._eval_node</code> and <code>Compiler._eval_map</code></li>
+          <li><span class="bullet bullet-green"></span>SIGN backward is <code>pass</code> — <code>sign(x)</code> is piecewise constant, gradient is zero everywhere</li>
+        </ul>
+      </div>
+
+      <div class="subsection">
+        <h3>ABS backward bug fix</h3>
+        <p>
+          The ABS backward was <code>grad.sign()</code> — this computed <code>sign(upstream_gradient)</code>
+          instead of <code>sign(x)</code>. The correct gradient of <code>|x|</code> is <code>upstream_grad * sign(x)</code>.
+          Fixed to <code>grad * inp.sign()</code>.
+        </p>
       </div>
 
     </div>
