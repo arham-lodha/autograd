@@ -266,6 +266,10 @@
         <a href="#s8">grad API, SIGN op, ABS backward fix</a>
         <span class="toc-date">2026-05-19</span>
       </li>
+      <li>
+        <a href="#s9">Higher-order differentiation</a>
+        <span class="toc-date">2026-05-20</span>
+      </li>
     </ol>
   </nav>
 
@@ -555,63 +559,42 @@
       </div>
     </div>
     <div class="entry-body">
-      <p>The symbolic backend is complete and fully tested. Priorities for what comes next:</p>
+      <p>The symbolic backend is complete and fully tested. Priorities for what comes next: <em>(updated 2026-05-20 — items 1–4 complete)</em></p>
 
       <div class="subsection">
-        <h3>1 — User-facing API (highest priority)</h3>
+        <h3>1 — User-facing API ✓</h3>
         <p>
-          The library has no usable interface. To compute a gradient today you must manually call
-          <code>Compiler.compile(..., backwards=True)</code>, <code>Executor.forward()</code>,
-          <code>compiler.compile(sym.grad)</code>, and <code>Executor.forward()</code> again.
-          The goal is a <code>grad(f)</code> function that hides all of this.
-        </p>
-        <p>
-          Design: <code>grad(f)</code> is the expensive step — it uses <code>inspect.signature</code>
-          to determine how many arguments <code>f</code> takes, creates one <code>VARIABLE</code> Symbol per argument,
-          calls <code>f(*syms)</code> to trace the graph (no values needed — operator overloads build the structure),
-          compiles the forward graph, runs <code>compile_backwards</code>, and compiles each gradient graph.
-          All compiled topos are captured in a closure.
-        </p>
-        <p>
-          The returned <code>df(*values)</code> is cheap — it just runs <code>executor.forward</code>
-          on the pre-compiled forward topo (to populate node values), then runs <code>executor.forward</code>
-          on each pre-compiled gradient topo, and returns the list of gradient arrays.
-          No recompilation on each call.
+          Done — see <a class="ref-chip" href="#s8">s8</a>. <code>grad(f)</code> / <code>evalf(*values)</code> shipped in <code>autograd/grad.py</code>.
         </p>
       </div>
 
       <div class="subsection">
-        <h3>2 — ABS backward missing</h3>
+        <h3>2 — ABS backward missing ✓</h3>
         <p>
-          Every differentiable op now has a backward rule except <code>ABS</code>.
-          Gradient is <code>sign(x)</code> — a one-liner to add to <code>_backwards_node</code>.
+          Done — see <a class="ref-chip" href="#s8">s8</a>. Fixed to <code>grad * inp.sign()</code>; SIGN op added alongside.
         </p>
       </div>
 
       <div class="subsection">
-        <h3>3 — End-to-end workload validation</h3>
+        <h3>3 — End-to-end workload validation ✓</h3>
         <p>
-          The test suite verifies individual ops numerically but nothing has been run as a full
-          training loop. Fitting a linear regression or a small MLP (forward + backward + gradient
-          descent update) would surface any integration bugs that unit tests miss.
+          Done. Integration tests (linear regression, small MLP) run successfully; no integration bugs surfaced.
         </p>
       </div>
 
       <div class="subsection">
-        <h3>4 — Executor copy mode</h3>
+        <h3>4 — Executor copy mode ✓</h3>
         <p>
-          <code>executor.forward</code> currently sets <code>node.value</code> in-place on Symbol objects shared between the forward and gradient topos.
-          A future <code>copy=True</code> parameter would write results only to <code>self._cache</code> and leave <code>node.value</code> untouched,
-          so grad evaluations never corrupt forward node values between calls.
-          Deferred until after the user-facing API is in place.
+          Done. <code>copy=True</code> mode implemented — results written only to <code>self._cache</code>,
+          leaving <code>node.value</code> untouched so repeated grad calls don't corrupt shared Symbol state.
         </p>
       </div>
 
       <div class="subsection">
-        <h3>5 — Longer term</h3>
+        <h3>5 — Longer term (active)</h3>
         <ul class="item-list">
-          <li><span class="bullet bullet-accent"></span><strong>Second-order gradients</strong> — the infrastructure is clean enough that differentiating through the gradient graph is feasible, but needs the user-facing API to be solid first.</li>
-          <li><span class="bullet bullet-accent"></span><strong>Optimizer primitives</strong> — SGD, Adam etc. are just graph operations, but depend on the API wrapper to be useful.</li>
+          <li><span class="bullet bullet-yellow"></span><strong>Higher-order differentiation</strong> — differentiating through the gradient graph. Work starting now — see <a class="ref-chip" href="#s9">s9</a>.</li>
+          <li><span class="bullet bullet-accent"></span><strong>Optimizer primitives</strong> — SGD, Adam etc. are just graph operations, feasible once higher-order diff is solid.</li>
         </ul>
       </div>
 
@@ -663,6 +646,43 @@
           instead of <code>sign(x)</code>. The correct gradient of <code>|x|</code> is <code>upstream_grad * sign(x)</code>.
           Fixed to <code>grad * inp.sign()</code>.
         </p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s9">
+    <div class="entry-header">
+      <div class="entry-index">9</div>
+      <div class="entry-meta">
+        <h2><a href="#s9">Higher-order differentiation</a></h2>
+        <div class="date">2026-05-20</div>
+      </div>
+    </div>
+    <div class="entry-body">
+      <p>
+        Items 1–4 from <a class="ref-chip" href="#s7">s7</a> are complete.
+        The library now has a user-facing <code>grad</code> API, a full backward pass, ABS/SIGN support, and an executor copy mode.
+        Next focus: higher-order differentiation.
+      </p>
+
+      <div class="subsection">
+        <h3>What this means</h3>
+        <p>
+          Because the backward pass produces a symbolic graph — not a numeric trace — differentiating it a second time is structurally the same problem as differentiating the forward pass.
+          <code>grad(grad(f))</code> should work by running <code>compile_backwards</code> on the first-order gradient graph.
+          The main questions are around whether the existing backward rules, graph sharing between forward/grad topos, and the copy-mode executor hold up under composition.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>Known risks to investigate</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-yellow"></span><strong>Backward rules that use <code>node</code> values</strong> — rules that reference intermediate forward values (e.g. <code>SOFTMAX</code>, <code>LOG</code>) need those values available when the second-order graph runs. May require the copy-mode executor to be used at every level.</li>
+          <li><span class="bullet bullet-yellow"></span><strong>Graph aliasing</strong> — the gradient graph shares <code>Symbol</code> nodes with the forward graph. A second <code>compile_backwards</code> call must not mutate shared nodes.</li>
+          <li><span class="bullet bullet-accent"></span><strong>ops without backward rules</strong> — <code>SIGN</code> has <code>pass</code> (gradient is zero), which is correct. Any other stub ops will silently drop second-order gradients — worth an audit.</li>
+        </ul>
       </div>
 
     </div>

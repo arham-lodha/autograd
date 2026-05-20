@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -15,12 +15,8 @@ class Executor:
         if id(node) in self._cache:
             return self._cache[id(node)]
 
-        if node.value is not None:
-            return node.value
-
         raise RuntimeError(
-            f"Node {node} has no cached value or no static value",
-            "Was forward called?"
+            f"Node {node} has no cached value — was forward called?",
         )
 
     def _eval_node(self, node: Symbol, feed_dict: Dict[int, np.ndarray]) -> np.ndarray:
@@ -147,24 +143,7 @@ class Executor:
 
         self._cache.clear()
 
-        needs_cache: Set[int] = set()
-        for node in reversed(topo):
-            if node.retain or node.requires_grad:
-                needs_cache.add(id(node))
+        for node in topo:
+            self._cache[id(node)] = self._eval_node(node, feed_id_map)
 
-                for p in node.prev:
-                    needs_cache.add(id(p))
-
-            elif id(node) in needs_cache:
-                for p in node.prev:
-                    needs_cache.add(id(p))
-
-        for index, node in enumerate(topo):
-            value = self._eval_node(node, feed_id_map)
-
-            node.value = value
-
-            if id(node) in needs_cache or index == len(topo) - 1:
-                self._cache[id(node)] = value
-
-        return self._cache[id(topo[-1])];
+        return self._cache[id(topo[-1])]
