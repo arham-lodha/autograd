@@ -45,7 +45,7 @@ class Compiler:
             Operation.UNBROADCAST: lambda x, y: _unbroadcast(x, y.shape),
             Operation.LESS_THAN: lambda x, y: x < y,
             Operation.RESHAPE_LIKE: lambda x, y: x.reshape(y.shape),
-            Operation.SIGN: np.sign
+            Operation.SIGN: np.sign,
         }
 
     def _build_topo(self, symbol: Symbol) -> List[Symbol]:
@@ -118,7 +118,7 @@ class Compiler:
         changed = False
         for node in topo:
 
-            if len(node.prev) != 0 and node.operation not in (Operation.ADD, Operation.MULTIPLY):
+            if len(node.prev) != 0 and node.operation not in (Operation.ADD, Operation.MULTIPLY, Operation.VECTOR):
 
                 if node.operation in self._eval_map and all(p.operation == Operation.CONSTANT for p in node.prev):
                     # Special case for sqrt to speed up.
@@ -146,7 +146,7 @@ class Compiler:
             non_constants = [
                 p for p in node.prev if p.operation != Operation.CONSTANT]
 
-            if len(constants) > 1:
+            if len(constants) > 1 and node.operation in (Operation.ADD, Operation.MULTIPLY):
                 values = [p.value for p in constants if p.value is not None]
                 if node.operation == Operation.ADD:
                     const_value = np.add.reduce(values)
@@ -166,6 +166,15 @@ class Compiler:
                     node.prev = non_constants + [constant]
 
                 changed = True
+
+            if len(non_constants) == 0 and node.operation == Operation.VECTOR:
+                constant = np.stack([p.value for p in constants if p.value is not None], axis=0)
+                node.operation = Operation.CONSTANT
+                node.value = constant
+                node.prev = []
+                node.requires_grad = False
+                changed = True
+
             folded_topo.append(node)
 
         return folded_topo, changed
@@ -195,7 +204,7 @@ class Compiler:
             folded_topo.append(node)
 
         return folded_topo, changed
-
+    
     def _fold_multiplication(self, topo: List[Symbol]) -> Tuple[List[Symbol], bool]:
         folded_topo: List[Symbol] = []
         changed = False
@@ -595,8 +604,14 @@ class Compiler:
     def compile_backwards(self, topo: List[Symbol]):
         for node in topo:
             node.grad = None
+        
+        root = topo[-1];
+        
+        if root.operation == Operation.VECTOR:
+            root.grad = self._make_constant(np.ones(len(root.prev)))
+        else:
+            root.grad = self._make_constant(1.0);
 
-        topo[-1].grad = self._make_constant(1.0)
         for node in reversed(topo):
             self._backwards_node(node)
 
@@ -793,3 +808,21 @@ class Compiler:
                 inp = prev[0]
                 if inp.requires_grad:
                     inp.grad = self._accumulate(inp.grad, grad * inp.sign())
+            case Operation.VECTOR:
+                for index, inp in enumerate(prev):
+                    if inp.requires_grad:
+                        inp.grad = self._accumulate(inp.grad, grad.get_item(index))
+
+            case Operation.GET_ITEM:
+                inp = prev[0]
+                index = kwargs.get('index', 0);
+
+                if inp.requires_grad:
+                    inp.grad = self._accumulate(inp.grad, grad.scatter_like(inp, index=index))
+
+            case Operation.SCATTER_LIKE:
+                original = prev[0]
+                index = kwargs.get('index', 0)
+
+                if original.requires_grad:
+                    original.grad = self._accumulate(original.grad, grad.get_item(index))

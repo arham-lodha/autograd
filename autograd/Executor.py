@@ -127,6 +127,24 @@ class Executor:
                 return np.array(np.size(inputs[0], kwargs.get('axis')))
             case Operation.SIGN:
                 return np.sign(inputs[0])
+            case Operation.VECTOR:
+                return np.stack(inputs);
+            case Operation.GET_ITEM:
+                index = kwargs.get('index', 0)
+                return inputs[0][index]
+            case Operation.SCATTER_LIKE:
+                
+                # Check this TODO
+                original = inputs[0]
+                ref = inputs[1]
+                index = kwargs.get('index', 0);
+
+                value = np.zeros(ref.shape);
+                value[index] = original
+
+                return value
+
+
             case _:
                 raise RuntimeError(f"Unknown operation: {node.operation}")
 

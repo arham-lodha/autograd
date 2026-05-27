@@ -31,8 +31,7 @@ class Symbol:
                 value, np.ndarray) else np.array(value)
         else:
             self.value = None
-
-
+        
         if self.prev:
             self.requires_grad = any(
                 prev_symbol.requires_grad for prev_symbol in self.prev)
@@ -163,3 +162,9 @@ class Symbol:
 
     def sign(self) -> 'Symbol':
         return Symbol(operation=Operation.SIGN, prev=[self]);
+
+    def get_item(self, index: int) -> 'Symbol':
+        return Symbol(operation=Operation.GET_ITEM, prev=[self], index=index);
+
+    def scatter_like(self, other: Inputs, index: int) -> 'Symbol':
+        return Symbol(operation=Operation.SCATTER_LIKE, prev=[self, self._ensure_symbol(other)], index=index)

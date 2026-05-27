@@ -35,3 +35,6 @@ class Operation(Enum):
     LESS_THAN = 31
     RESHAPE_LIKE = 32
     SIGN=33
+    VECTOR=34
+    GET_ITEM=35
+    SCATTER_LIKE=36
