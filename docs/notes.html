@@ -278,6 +278,10 @@
         <a href="#s11">Jacobian via _sym_grad vector case</a>
         <span class="toc-date">2026-05-27</span>
       </li>
+      <li>
+        <a href="#s12">Higher-order differentiation</a>
+        <span class="toc-date">2026-05-27</span>
+      </li>
     </ol>
   </nav>
 
@@ -801,6 +805,55 @@
           If <code>fi</code> does not depend on <code>wrt[j]</code>, that variable won't appear in
           <code>fi</code>'s topo and <code>grad_maps[i]</code> will have no entry for it.
           <code>df</code> returns <code>np.zeros(())</code> for those entries.
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s12">
+    <div class="entry-header">
+      <div class="entry-index">12</div>
+      <div class="entry-meta">
+        <h2><a href="#s12">Higher-order differentiation</a></h2>
+        <div class="date">2026-05-27</div>
+      </div>
+    </div>
+    <div class="entry-body">
+
+      <div class="subsection">
+        <h3>API</h3>
+        <p>
+          <code>_sym_grad</code> scalar case now returns <code>(df, evalf, grad_syms)</code> where
+          <code>grad_syms</code> is the list of gradient Symbols (one per <code>wrt</code> variable).
+          These can be passed directly back into <code>grad()</code> for higher-order:
+        </p>
+        <ul class="item-list">
+          <li><span class="bullet bullet-green"></span><strong>nth-order scalar</strong> — <code>df, _, [dfdx] = grad(f, wrt=[x])</code> then <code>ddf, _, [d2fdx2] = grad(dfdx, wrt=[x])</code> etc. Each call compiles and differentiates the previous gradient Symbol.</li>
+          <li><span class="bullet bullet-green"></span><strong>Hessian via Jacobian path</strong> — <code>grad([df/dx, df/dy], wrt=[x, y])</code> returns the full Hessian matrix using the existing vector/Jacobian infrastructure from <a class="ref-chip" href="#s11">s11</a>.</li>
+        </ul>
+      </div>
+
+      <div class="subsection">
+        <h3>Bug: shape-reference nodes in higher-order topos</h3>
+        <p>
+          <code>UNBROADCAST(value, ref)</code>, <code>BROADCAST_TO_MATCH</code>, <code>RESHAPE_LIKE</code>,
+          and <code>SCATTER_LIKE</code> all take a second <code>ref</code> argument used only for its
+          runtime shape. That reference node has <code>requires_grad=True</code> (it's a live node in
+          the computation graph) but never receives a gradient — it's a dead-end by design.
+        </p>
+        <p>
+          In first-order differentiation this never surfaced because the reference nodes were always
+          forward-graph nodes whose <code>.grad</code> wasn't checked. In higher-order diff, these
+          reference nodes appear inside the gradient topo itself and get picked up by <code>_build_topo</code>.
+          <code>_backwards_node</code> then hit an assertion <code>node.grad is not None</code> for them.
+        </p>
+        <p>
+          <strong>Fix:</strong> replaced the assertion with a <code>return</code> — a node with
+          <code>grad=None</code> at backward time simply has zero gradient contribution and is skipped.
+          The assertion was appropriate for catching topo-order bugs in the scalar case but is wrong
+          in the presence of reference-argument nodes.
         </p>
       </div>
 

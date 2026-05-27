@@ -626,7 +626,8 @@ class Compiler:
         if not node.requires_grad:
             return
 
-        assert node.grad is not None, f"no gradient reached {node} - check topo order." 
+        if node.grad is None:
+            return
 
         grad = node.grad;
         prev = node.prev

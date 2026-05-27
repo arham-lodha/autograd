@@ -10,25 +10,31 @@ from .Executor import Executor
 
 def _sym_grad(f: Union[Symbol, List[Symbol]], compiler: Compiler, executor: Executor, wrt: Optional[Union[Symbol, List[Symbol]]] = None):
     if isinstance(f, Symbol):
-        compiled_f = compiler.compile(f, backwards=True);
-        grad_topos: List[List[Symbol]] = [];
-        variables = [variable for variable in compiled_f if variable.operation == Operation.VARIABLE ]
+        compiled_f = compiler.compile(f, backwards=True)
+        variables = [node for node in compiled_f if node.operation == Operation.VARIABLE]
 
         if wrt is None:
-            wrt = variables;
-
+            wrt = variables
         if isinstance(wrt, Symbol):
-            wrt = [wrt];
+            wrt = [wrt]
 
-        grad_topos = [compiler.compile(variable.grad or Symbol()) for variable in wrt];
+        # Save gradient Symbols before compiling — these are the handles for higher-order
+        grad_syms: List[Optional[Symbol]] = [var.grad for var in wrt]
+        grad_topos: List[Optional[List[Symbol]]] = [
+            compiler.compile(gs) if gs is not None else None
+            for gs in grad_syms
+        ]
 
-        def evalf(values: Dict[Symbol, NonSymbolInputs]):
-            return executor.forward(compiled_f, values);
+        def evalf(values: Dict[Symbol, NonSymbolInputs]) -> np.ndarray:
+            return executor.forward(compiled_f, values)
 
-        def df(values: Dict[Symbol, NonSymbolInputs]):
-            return [executor.forward(grad_topo, values) for grad_topo in grad_topos];
+        def df(values: Dict[Symbol, NonSymbolInputs]) -> List[np.ndarray]:
+            return [
+                executor.forward(gt, values) if gt is not None else np.zeros(())
+                for gt in grad_topos
+            ]
 
-        return df, evalf
+        return df, evalf, grad_syms
 
     else:
         if isinstance(wrt, Symbol):
