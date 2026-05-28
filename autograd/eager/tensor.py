@@ -2,7 +2,7 @@ from typing import Callable, List, Optional, Union
 
 import numpy as np
 
-from .ops import Operation
+from ..ops import Operation
 
 
 class Tensor:

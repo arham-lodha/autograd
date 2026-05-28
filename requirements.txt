@@ -1,0 +1,13 @@
+-e git+https://github.com/arham-lodha/autograd.git@84820abe4958d878de737c8317d3b68e19460c49#egg=autograd
+execnet==2.1.2
+iniconfig==2.3.0
+joblib==1.5.3
+numpy==2.4.6
+packaging==26.2
+pluggy==1.6.0
+Pygments==2.20.0
+pytest==9.0.3
+pytest-xdist==3.8.0
+scikit-learn==1.8.0
+scipy==1.17.1
+threadpoolctl==3.6.0

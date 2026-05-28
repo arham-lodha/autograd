@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Autograd — Dev Notes</title>
+  <style>
+    :root {
+      --bg:         #0f1117;
+      --surface:    #1a1d27;
+      --border:     #2a2d3a;
+      --accent:     #7c6af7;
+      --accent-dim: #3d3570;
+      --text:       #d4d8f0;
+      --muted:      #6b7094;
+      --tag-bg:     #1f2235;
+      --tag-text:   #9b93ff;
+      --code-bg:    #13151f;
+      --green:      #4ade80;
+      --yellow:     #facc15;
+      --red:        #f87171;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+      font-size: 15px;
+      line-height: 1.7;
+      padding: 48px 24px;
+    }
+
+    .page {
+      max-width: 820px;
+      margin: 0 auto;
+    }
+
+    /* ── Header ── */
+    .site-header {
+      margin-bottom: 56px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 28px;
+    }
+    .site-header h1 {
+      font-size: 26px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -0.5px;
+    }
+    .site-header p {
+      color: var(--muted);
+      margin-top: 6px;
+      font-size: 14px;
+    }
+
+    /* ── TOC ── */
+    .toc {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 20px 24px;
+      margin-bottom: 48px;
+    }
+    .toc h2 {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+    .toc ol {
+      padding-left: 20px;
+    }
+    .toc li {
+      margin: 5px 0;
+    }
+    .toc a {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 14px;
+    }
+    .toc a:hover { text-decoration: underline; }
+    .toc .toc-date {
+      color: var(--muted);
+      font-size: 12px;
+      margin-left: 8px;
+    }
+
+    /* ── Entry ── */
+    .entry {
+      margin-bottom: 56px;
+      scroll-margin-top: 24px;
+    }
+
+    .entry-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .entry-index {
+      flex-shrink: 0;
+      width: 32px;
+      height: 32px;
+      background: var(--accent-dim);
+      color: var(--accent);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 700;
+      margin-top: 2px;
+    }
+    .entry-meta h2 {
+      font-size: 19px;
+      font-weight: 650;
+      color: #fff;
+      letter-spacing: -0.3px;
+    }
+    .entry-meta .date {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 3px;
+    }
+
+    .entry-body {
+      border-left: 2px solid var(--border);
+      padding-left: 24px;
+      margin-left: 16px;
+    }
+
+    .entry-body p { margin-bottom: 12px; }
+    .entry-body p:last-child { margin-bottom: 0; }
+
+    /* ── Subsections ── */
+    .subsection {
+      margin-top: 20px;
+    }
+    .subsection h3 {
+      font-size: 13px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    /* ── Item list ── */
+    .item-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .item-list li {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 14px;
+    }
+    .item-list li .bullet {
+      flex-shrink: 0;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      margin-top: 7px;
+    }
+    .bullet-green  { background: var(--green); }
+    .bullet-yellow { background: var(--yellow); }
+    .bullet-red    { background: var(--red); }
+    .bullet-accent { background: var(--accent); }
+
+    /* ── Code ── */
+    code {
+      font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 13px;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 1px 6px;
+      color: #b8c0e8;
+    }
+
+    /* ── Divider ── */
+    .entry + .entry {
+      border-top: 1px solid var(--border);
+      padding-top: 48px;
+    }
+
+    /* ── Ref chip ── */
+    .ref-chip {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--tag-bg);
+      color: var(--tag-text);
+      border: 1px solid var(--accent-dim);
+      border-radius: 4px;
+      padding: 1px 7px;
+      font-family: 'JetBrains Mono', monospace;
+      letter-spacing: 0.3px;
+      text-decoration: none;
+    }
+    .ref-chip:hover { background: var(--accent-dim); }
+
+    /* ── Anchor icon ── */
+    .entry-meta h2 a {
+      color: inherit;
+      text-decoration: none;
+    }
+    .entry-meta h2 a:hover::after {
+      content: ' #';
+      color: var(--accent);
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <header class="site-header">
+    <h1>Autograd — Dev Notes</h1>
+    <p>Architecture decisions, next steps, and session notes. Reference a section with its ID chip in conversation.</p>
+  </header>
+
+  <nav class="toc">
+    <h2>Contents</h2>
+    <ol>
+      <li>
+        <a href="#s1">Project orientation &amp; codebase state</a>
+        <span class="toc-date">2026-05-17</span>
+      </li>
+      <li>
+        <a href="#s2">Next steps — symbolic backward pass</a>
+        <span class="toc-date">2026-05-17</span>
+      </li>
+      <li>
+        <a href="#s3">Executor fixes &amp; design decisions</a>
+        <span class="toc-date">2026-05-18</span>
+      </li>
+      <li>
+        <a href="#s4">Test suite migration &amp; bugs found</a>
+        <span class="toc-date">2026-05-18</span>
+      </li>
+      <li>
+        <a href="#s5">Backward pass — all bugs fixed</a>
+        <span class="toc-date">2026-05-19</span>
+      </li>
+      <li>
+        <a href="#s6">DCE ordering bug fixed</a>
+        <span class="toc-date">2026-05-19</span>
+      </li>
+      <li>
+        <a href="#s7">Next steps</a>
+        <span class="toc-date">2026-05-19</span>
+      </li>
+      <li>
+        <a href="#s8">grad API, SIGN op, ABS backward fix</a>
+        <span class="toc-date">2026-05-19</span>
+      </li>
+      <li>
+        <a href="#s9">Higher-order differentiation</a>
+        <span class="toc-date">2026-05-20</span>
+      </li>
+      <li>
+        <a href="#s10">VECTOR / GET_ITEM / SCATTER_LIKE — implementation &amp; fixes</a>
+        <span class="toc-date">2026-05-27</span>
+      </li>
+      <li>
+        <a href="#s11">Jacobian via _sym_grad vector case</a>
+        <span class="toc-date">2026-05-27</span>
+      </li>
+      <li>
+        <a href="#s12">Higher-order differentiation</a>
+        <span class="toc-date">2026-05-27</span>
+      </li>
+    </ol>
+  </nav>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s1">
+    <div class="entry-header">
+      <div class="entry-index">1</div>
+      <div class="entry-meta">
+        <h2><a href="#s1">Project orientation &amp; codebase state</a></h2>
+        <div class="date">2026-05-17</div>
+      </div>
+    </div>
+    <div class="entry-body">
+      <p>
+        The <strong>symbolic/compiled mode</strong> (<code>Symbol</code> + <code>Compiler</code> + <code>Executor</code>) is the only active codebase.
+        The old <strong>eager mode</strong> (<code>Tensor</code> + <code>Engine</code>) is a deprecated prototype — files have been moved to <code>autograd/eager/</code> and should not be treated as reference or oracle.
+      </p>
+
+      <div class="subsection">
+        <h3>Symbolic pipeline — what's done</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-green"></span><code>symbol.py</code> — full operator-overloaded graph builder, mirrors the old Tensor API</li>
+          <li><span class="bullet bullet-green"></span><code>compiler.py</code> — optimization pipeline: canonicalization, constant folding, add/mul flattening, algebraic simplification, dead code elimination, decanonicalization</li>
+          <li><span class="bullet bullet-green"></span><code>Executor.py</code> — forward execution of a compiled topo list, with selective caching</li>
+        </ul>
+      </div>
+
+      <div class="subsection">
+        <h3>Known bugs / incomplete</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-red"></span><code>Compiler._accumulate()</code> — reassigns a local variable instead of mutating, so gradients never accumulate</li>
+          <li><span class="bullet bullet-green"></span><code>Executor.forward()</code> caching condition — fixed, now uses <code>index == len(topo) - 1</code></li>
+          <li><span class="bullet bullet-yellow"></span><code>compile_backwards()</code> — <code>SOFTMAX</code> case references undefined <code>axis</code> variable</li>
+          <li><span class="bullet bullet-green"></span><code>Executor.backward()</code> — resolved: not needed (see s3)</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s2">
+    <div class="entry-header">
+      <div class="entry-index">2</div>
+      <div class="entry-meta">
+        <h2><a href="#s2">Next steps — symbolic backward pass</a></h2>
+        <div class="date">2026-05-17</div>
+      </div>
+    </div>
+    <div class="entry-body">
+      <p>Priority order for getting the symbolic backward pass working end-to-end:</p>
+
+      <ul class="item-list">
+        <li><span class="bullet bullet-accent"></span><strong>1. Fix <code>Compiler._accumulate()</code></strong> — one-liner bug, but blocks everything downstream</li>
+        <li><span class="bullet bullet-accent"></span><strong>2. Fix <code>Executor.forward()</code></strong> — the bad <code>if node in topo[-1]</code> check will crash before any backward can run</li>
+        <li><span class="bullet bullet-accent"></span><strong>3. Verify <code>compile_backwards()</code> end-to-end</strong> — once 1 &amp; 2 are fixed, run the symbolic backward and diff against the eager mode as a reference oracle</li>
+        <li><span class="bullet bullet-green"></span><strong>4. <code>Executor.backward()</code></strong> — resolved: not needed. The gradient graph from <code>compile_backwards()</code> is just another symbolic graph; <code>Executor.forward()</code> executes it directly (see s3)</li>
+        <li><span class="bullet bullet-accent"></span><strong>5. Tests</strong> — existing tests all target the deprecated eager mode; need equivalent coverage for the symbolic pipeline</li>
+      </ul>
+
+      <div class="subsection">
+        <h3>Open design question</h3>
+        <p>
+          Resolved — <code>Executor.backward()</code> is not needed at all. The backward graph is executed via <code>Executor.forward()</code> directly (see s3).
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s3">
+    <div class="entry-header">
+      <div class="entry-index">3</div>
+      <div class="entry-meta">
+        <h2><a href="#s3">Executor fixes &amp; design decisions</a></h2>
+        <div class="date">2026-05-18</div>
+      </div>
+    </div>
+    <div class="entry-body">
+
+      <div class="subsection">
+        <h3>Bugs fixed in Executor.py</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-green"></span><code>ADD</code> and <code>MULTIPLY</code> cases had no <code>return results</code> — silently returned <code>None</code> at runtime. Fixed by adding explicit returns.</li>
+          <li><span class="bullet bullet-green"></span><code>GREATER_THAN</code> / <code>LESS_THAN</code> used <code>np.all()</code>, collapsing the comparison to a single scalar boolean. Fixed to return element-wise boolean arrays (<code>inputs[0] &gt; inputs[1]</code>), consistent with all other shape-preserving ops.</li>
+          <li><span class="bullet bullet-green"></span><code>SIZE</code> was a stub (<code>pass</code>). Fixed: now uses <code>np.size(inputs[0], kwargs.get('axis'))</code> wrapped as a 0-d <code>np.ndarray</code>. The original broken version wrapped in a list, producing a 1-element 1-D array instead of a scalar.</li>
+        </ul>
+      </div>
+
+      <div class="subsection">
+        <h3>Type annotation fixes</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-green"></span><code>_eval_node</code> return type changed from <code>NonSymbolInputs</code> to <code>np.ndarray</code> — every branch either returns an array or raises.</li>
+          <li><span class="bullet bullet-green"></span><code>_get_value</code> return type changed from <code>NonSymbolInputs</code> to <code>np.ndarray</code> — it hits the cache (typed <code>Dict[int, np.ndarray]</code>), returns <code>node.value</code> after a <code>is not None</code> guard, or raises. Never returns <code>None</code>.</li>
+          <li><span class="bullet bullet-green"></span><code>inputs: list[np.ndarray]</code> annotation in <code>_eval_node</code> is now correct given the above.</li>
+        </ul>
+      </div>
+
+      <div class="subsection">
+        <h3>Key design decision — no Executor.backward()</h3>
+        <p>
+          <code>Compiler.compile_backwards()</code> symbolically differentiates the forward graph and produces a new <code>topo</code> list of <code>Symbol</code> nodes representing the gradient computations.
+          That gradient graph is structurally identical to a forward graph, so <code>Executor.forward()</code> executes it directly — no separate <code>backward()</code> method is needed or appropriate.
+          This is a fundamental property of symbolic differentiation: the backward pass <em>is</em> a forward pass over a different graph.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>Eager mode status</h3>
+        <p>
+          Deprecated. Files moved to <code>autograd/eager/</code>. Do not use as a reference oracle or test target going forward — all new tests should target the symbolic pipeline.
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s4">
+    <div class="entry-header">
+      <div class="entry-index">4</div>
+      <div class="entry-meta">
+        <h2><a href="#s4">Test suite migration &amp; bugs found</a></h2>
+        <div class="date">2026-05-18</div>
+      </div>
+    </div>
+    <div class="entry-body">
+
+      <div class="subsection">
+        <h3>Migration</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-green"></span>All old eager tests moved to <code>tests/eager/</code>; imports updated to <code>autograd.eager</code>. 98 tests still pass.</li>
+          <li><span class="bullet bullet-green"></span><code>autograd/__init__.py</code> updated to export the symbolic API (<code>Symbol</code>, <code>Compiler</code>, <code>Executor</code>). <code>autograd/eager/__init__.py</code> created so the eager subpackage is importable.</li>
+          <li><span class="bullet bullet-green"></span><code>autograd/eager/tensor.py</code> import fixed: <code>from .ops</code> → <code>from ..ops</code> (ops lives in the parent package).</li>
+        </ul>
+      </div>
+
+      <div class="subsection">
+        <h3>New symbolic test suite — 130 tests</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-accent"></span><code>tests/test_symbol.py</code> — graph construction, operator overloads, <code>requires_grad</code> inference</li>
+          <li><span class="bullet bullet-accent"></span><code>tests/test_compiler.py</code> — constant folding, algebraic simplification, canonicalization/decanonicalization, DCE, end-to-end value correctness</li>
+          <li><span class="bullet bullet-accent"></span><code>tests/test_executor.py</code> — forward pass for every operation; also added missing <code>BROADCAST_TO_MATCH</code> and <code>UNBROADCAST</code> cases to <code>Executor._eval_node</code></li>
+          <li><span class="bullet bullet-accent"></span><code>tests/test_backward_symbolic.py</code> — analytical gradients vs central finite differences for every op</li>
+        </ul>
+      </div>
+
+      <div class="subsection">
+        <h3>Bugs found by the test suite (all marked <code>xfail</code>)</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-red"></span><strong>NEG backward missing</strong> — <code>_backwards_node</code> has no <code>NEG</code> case. Decanonicalization converts <code>MULTIPLY(-1, x)</code> → <code>NEG</code>, so any subtraction whose second operand requires grad silently drops its gradient. Fix: add <code>case Operation.NEG: arg.grad = _accumulate(arg.grad, -grad)</code>.</li>
+          <li><span class="bullet bullet-red"></span><strong>SQRT backward missing</strong> — no <code>SQRT</code> case in <code>_backwards_node</code>. Affects <code>x.sqrt()</code> and <code>x ** 0.5</code> (both decanonicalize to SQRT). Fix: <code>arg.grad = _accumulate(arg.grad, grad / (2 * node))</code>.</li>
+          <li><span class="bullet bullet-red"></span><strong>TRANSPOSE backward missing</strong> — no <code>TRANSPOSE</code> case. Fix: <code>arg.grad = _accumulate(arg.grad, grad.transpose())</code>.</li>
+          <li><span class="bullet bullet-red"></span><strong>RESHAPE / EXPAND_DIMS / SQUEEZE / SWAP_AXIS backward missing</strong> — none of these shape ops have backward cases. Fixes are straightforward inverses: reshape back, squeeze/expand, swap axes again.</li>
+          <li><span class="bullet bullet-red"></span><strong>MATMUL backward uses <code>*</code> instead of <code>@</code></strong> — <code>compiler.py</code> line ~658: <code>grad * b.transpose()</code> and <code>a.transpose() * grad</code> should both use <code>@</code>. Element-wise multiply produces wrong shapes and wrong values.</li>
+          <li><span class="bullet bullet-yellow"></span><strong>SUM / MEAN axis backward incomplete</strong> — after <code>expand_dims</code> the gradient is not broadcast back to the input shape, so the gradient has the wrong shape for axis reductions without <code>keepdims</code>.</li>
+          <li><span class="bullet bullet-yellow"></span><strong>DCE ordering bug (compiler)</strong> — when <code>_algebraic_simplification</code> eliminates the root node (e.g. <code>log(exp(x))</code> → <code>x</code>), it removes it from <code>new_topo</code> without ensuring the replacement is last. DCE then selects the wrong node as the live root. Workaround in tests: wrap root-level simplifications in an outer <code>.sum()</code>.</li>
+        </ul>
+      </div>
+
+      <div class="subsection">
+        <h3>Current test count (as of s4)</h3>
+        <p>
+          <code>tests/</code>: 110 passed, 20 xfailed (0 failures) &nbsp;|&nbsp;
+          <code>tests/eager/</code>: 98 passed
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s5">
+    <div class="entry-header">
+      <div class="entry-index">5</div>
+      <div class="entry-meta">
+        <h2><a href="#s5">Backward pass — all bugs fixed</a></h2>
+        <div class="date">2026-05-19</div>
+      </div>
+    </div>
+    <div class="entry-body">
+
+      <div class="subsection">
+        <h3>New operation: RESHAPE_LIKE</h3>
+        <p>
+          Added <code>RESHAPE_LIKE(x, ref)</code> to <code>ops.py</code>, <code>symbol.py</code>, <code>Executor._eval_node</code>, and <code>Compiler._eval_map</code>.
+          Mirrors the <code>BROADCAST_TO_MATCH</code> / <code>UNBROADCAST</code> pattern: uses the <em>runtime</em> shape of <code>ref</code> so the original shape doesn't need to be known at compile_backwards time.
+          Its own backward is <code>grad.reshape_like(inp)</code> — it is its own inverse.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>Fixes in _backwards_node</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-green"></span><strong>RESHAPE</strong> — <code>grad.reshape_like(inp)</code></li>
+          <li><span class="bullet bullet-green"></span><strong>EXPAND_DIMS</strong> — <code>grad.squeeze(axis)</code> (axis known from kwargs)</li>
+          <li><span class="bullet bullet-green"></span><strong>SQUEEZE</strong> — <code>grad.expand_dims(axis)</code> for specified axis; <code>grad.reshape_like(inp)</code> for <code>axis=None</code></li>
+          <li><span class="bullet bullet-green"></span><strong>SWAP_AXIS</strong> — <code>grad.swap_axis(axis1, axis2)</code> (its own inverse)</li>
+          <li><span class="bullet bullet-green"></span><strong>SUM axis backward</strong> — added <code>.broadcast_to_match(inp)</code> after <code>expand_dims</code>; the expanded gradient was previously left at the reduced shape instead of being broadcast back to the full input shape. This fix also unblocked the MEAN axis backward (which received a correctly-shaped upstream gradient as a result).</li>
+          <li><span class="bullet bullet-green"></span><strong>ADD broadcasting</strong> — changed <code>grad</code> → <code>grad.unbroadcast(p)</code> for each ADD input. Without this, broadcasting across an ADD (e.g. <code>x - x.mean(keepdims=True)</code>) passed the full-shaped gradient to a smaller-shaped node, producing wrong gradients.</li>
+          <li><span class="bullet bullet-green"></span><strong>NEG / SQRT / TRANSPOSE requires_grad guard</strong> — these three cases accumulated gradients without first checking <code>prev[0].requires_grad</code>.</li>
+        </ul>
+      </div>
+
+      <div class="subsection">
+        <h3>MATMUL 1D input fix (Executor)</h3>
+        <p>
+          <code>W @ x</code> where <code>x</code> is 1D (shape <code>(k,)</code>) works in the forward pass.
+          In the backward, <code>grad_W = grad @ x.T</code> fails because numpy's transpose of a 1D array is a no-op, so the executor received <code>(m,) @ (k,)</code> — an invalid matmul.
+          The correct result is <code>np.outer(grad, x)</code>.
+          Fix: in <code>Executor._eval_node</code> MATMUL case, when both inputs are 1D, use <code>np.outer</code> instead of <code>@</code>.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>Current test count</h3>
+        <p>
+          <code>tests/</code>: 130 passed, 0 xfailed (0 failures) &nbsp;|&nbsp;
+          <code>tests/eager/</code>: 98 passed
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s6">
+    <div class="entry-header">
+      <div class="entry-index">6</div>
+      <div class="entry-meta">
+        <h2><a href="#s6">DCE ordering bug fixed</a></h2>
+        <div class="date">2026-05-19</div>
+      </div>
+    </div>
+    <div class="entry-body">
+
+      <div class="subsection">
+        <h3>The bug</h3>
+        <p>
+          When <code>_algebraic_simplification</code> eliminated the root node (e.g. <code>log(exp(x))</code> → <code>x</code>),
+          it removed the root from <code>new_topo</code> without ensuring the replacement ended up last.
+          <code>_dead_code_elimination</code> always treats <code>topo[-1]</code> as the live root, so it picked
+          the wrong node — in the <code>log(exp(x))</code> case, <code>EXP(x)</code> ended up last and was treated
+          as the root, so the executor returned <code>exp(x)</code> instead of <code>x</code>.
+          The bug was order-dependent: <code>x + 0</code> passed by coincidence (x was last) but <code>0 + x</code>
+          failed (0 was last).
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>The fix</h3>
+        <p>
+          After the simplification loop in <code>_algebraic_simplification</code>, resolve the actual root
+          via <code>get_actual(topo[-1])</code> and move it to the end of <code>new_topo</code> if it isn't already last.
+          DCE then correctly identifies the replacement as the live root and eliminates the now-dead intermediate nodes (e.g. <code>EXP(x)</code>).
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>Note on non-adjacent inverses</h3>
+        <p>
+          This fix only applies after a simplification rule fires. It does <em>not</em> handle cases where
+          f and f⁻¹ are not directly composed (e.g. <code>log(c * exp(x))</code>). Local rewrite rules
+          require the pair to be structurally adjacent; general inverse cancellation through commutative
+          or associative operations would require a more powerful approach (e.g. e-graphs / equality saturation).
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>Test cleanup</h3>
+        <p>
+          Removed <code>.sum()</code> wrappers and the workaround comment from <code>tests/test_compiler.py</code>.
+          Root-level simplification tests (<code>log(exp(x))</code>, <code>T(T(x))</code>, <code>0+x</code>, etc.)
+          now assert directly on the simplified value.
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s7">
+    <div class="entry-header">
+      <div class="entry-index">7</div>
+      <div class="entry-meta">
+        <h2><a href="#s7">Next steps</a></h2>
+        <div class="date">2026-05-19</div>
+      </div>
+    </div>
+    <div class="entry-body">
+      <p>The symbolic backend is complete and fully tested. Priorities for what comes next: <em>(updated 2026-05-20 — items 1–4 complete)</em></p>
+
+      <div class="subsection">
+        <h3>1 — User-facing API ✓</h3>
+        <p>
+          Done — see <a class="ref-chip" href="#s8">s8</a>. <code>grad(f)</code> / <code>evalf(*values)</code> shipped in <code>autograd/grad.py</code>.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>2 — ABS backward missing ✓</h3>
+        <p>
+          Done — see <a class="ref-chip" href="#s8">s8</a>. Fixed to <code>grad * inp.sign()</code>; SIGN op added alongside.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>3 — End-to-end workload validation ✓</h3>
+        <p>
+          Done. Integration tests (linear regression, small MLP) run successfully; no integration bugs surfaced.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>4 — Executor copy mode ✓</h3>
+        <p>
+          Done. <code>copy=True</code> mode implemented — results written only to <code>self._cache</code>,
+          leaving <code>node.value</code> untouched so repeated grad calls don't corrupt shared Symbol state.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>5 — Longer term (active)</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-yellow"></span><strong>Higher-order differentiation</strong> — differentiating through the gradient graph. Work starting now — see <a class="ref-chip" href="#s9">s9</a>.</li>
+          <li><span class="bullet bullet-accent"></span><strong>Optimizer primitives</strong> — SGD, Adam etc. are just graph operations, feasible once higher-order diff is solid.</li>
+        </ul>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s8">
+    <div class="entry-header">
+      <div class="entry-index">8</div>
+      <div class="entry-meta">
+        <h2><a href="#s8">grad API, SIGN op, ABS backward fix</a></h2>
+        <div class="date">2026-05-19</div>
+      </div>
+    </div>
+    <div class="entry-body">
+
+      <div class="subsection">
+        <h3>grad API — autograd/grad.py</h3>
+        <p>
+          <code>grad(f)</code> is the compile-time step: uses <code>inspect.signature</code> to determine
+          the number of arguments, creates one <code>VARIABLE</code> Symbol per argument, calls <code>f(*syms)</code>
+          to trace the graph (no values needed — operator overloads build structure), compiles the forward graph
+          with <code>backwards=True</code>, and compiles each input's gradient graph.
+          All topos are captured in a closure.
+        </p>
+        <p>
+          Returns <code>(df, evalf)</code>. <code>df(*values)</code> runs forward once to populate node values,
+          then evaluates each pre-compiled gradient topo — no recompilation per call.
+          <code>evalf(*values)</code> just runs the forward topo.
+          Exported from <code>autograd.__init__</code>.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>SIGN operation</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-green"></span>Added <code>SIGN = 33</code> to <code>ops.py</code></li>
+          <li><span class="bullet bullet-green"></span>Added <code>sign()</code> method to <code>Symbol</code></li>
+          <li><span class="bullet bullet-green"></span>Added <code>np.sign</code> to <code>Executor._eval_node</code> and <code>Compiler._eval_map</code></li>
+          <li><span class="bullet bullet-green"></span>SIGN backward is <code>pass</code> — <code>sign(x)</code> is piecewise constant, gradient is zero everywhere</li>
+        </ul>
+      </div>
+
+      <div class="subsection">
+        <h3>ABS backward bug fix</h3>
+        <p>
+          The ABS backward was <code>grad.sign()</code> — this computed <code>sign(upstream_gradient)</code>
+          instead of <code>sign(x)</code>. The correct gradient of <code>|x|</code> is <code>upstream_grad * sign(x)</code>.
+          Fixed to <code>grad * inp.sign()</code>.
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s10">
+    <div class="entry-header">
+      <div class="entry-index">10</div>
+      <div class="entry-meta">
+        <h2><a href="#s10">VECTOR / GET_ITEM / SCATTER_LIKE — implementation &amp; fixes</a></h2>
+        <div class="date">2026-05-27</div>
+      </div>
+    </div>
+    <div class="entry-body">
+
+      <div class="subsection">
+        <h3>skip_optimization removed from grad.py</h3>
+        <p>
+          Investigated whether <code>skip_optimization=True</code> was necessary when compiling gradient graphs.
+          Tests confirmed it is not — 13 functions checked, <code>skip_optimization=False</code> matched finite differences
+          identically across all cases. The optimization passes are idempotent on already-optimized forward nodes;
+          the one pass that does write back (recanonicalization of <code>NEG</code>) produces no numeric difference
+          because the executor handles both forms. Removed from <code>grad.py</code>.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>New ops: VECTOR, GET_ITEM, SCATTER_LIKE</h3>
+        <p>
+          Three new operations added to support fully differentiable vector outputs — see <a class="ref-chip" href="#s9">s9</a> for design rationale.
+          They form a closed family: VECTOR's backward uses GET_ITEM, GET_ITEM's backward uses SCATTER_LIKE,
+          SCATTER_LIKE's backward uses GET_ITEM again.
+        </p>
+        <ul class="item-list">
+          <li><span class="bullet bullet-green"></span><strong>VECTOR</strong> — forward: <code>np.stack(inputs)</code>. Backward: <code>GET_ITEM(grad, i)</code> routed to each <code>prev[i]</code>.</li>
+          <li><span class="bullet bullet-green"></span><strong>GET_ITEM</strong> — forward: <code>inputs[0][index]</code> (index in kwargs). Backward: <code>SCATTER_LIKE(grad, index, inp)</code> where <code>inp</code> is the original array, passed as a shape reference.</li>
+          <li><span class="bullet bullet-green"></span><strong>SCATTER_LIKE</strong> — forward: zeros shaped like <code>ref</code> with <code>grad</code> placed at <code>index</code>. Backward: <code>GET_ITEM(grad, index)</code>. Mirrors the <code>RESHAPE_LIKE</code> / <code>BROADCAST_TO_MATCH</code> pattern of using a runtime shape reference.</li>
+        </ul>
+      </div>
+
+      <div class="subsection">
+        <h3>Bugs fixed during implementation</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-green"></span><strong>GET_ITEM executor</strong> — was <code>return inputs[index]</code> (indexing the list of prev values) instead of <code>return inputs[0][index]</code> (indexing the array).</li>
+          <li><span class="bullet bullet-green"></span><strong>Typo in compiler backward</strong> — <code>grad.scattar_like(...)</code> → <code>grad.scatter_like(...)</code>.</li>
+          <li><span class="bullet bullet-green"></span><strong>compile_backwards seed for VECTOR root</strong> — was always <code>1.0</code> (scalar). GET_ITEM then tried to index a 0-d array and raised. Fixed: if <code>topo[-1].operation == VECTOR</code>, seed with <code>np.ones(len(root.prev))</code>.</li>
+          <li><span class="bullet bullet-green"></span><strong>Constant folding type error for VECTOR</strong> — <code>np.stack([p.value ...])</code> rejected <code>Optional[np.ndarray]</code>. Fixed with <code>if p.value is not None</code> filter (safe: CONSTANT nodes always have value set).</li>
+        </ul>
+      </div>
+
+      <div class="subsection">
+        <h3>Test count</h3>
+        <p>241 passed, 0 failures.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s9">
+    <div class="entry-header">
+      <div class="entry-index">9</div>
+      <div class="entry-meta">
+        <h2><a href="#s9">Higher-order differentiation</a></h2>
+        <div class="date">2026-05-20</div>
+      </div>
+    </div>
+    <div class="entry-body">
+      <p>
+        Items 1–4 from <a class="ref-chip" href="#s7">s7</a> are complete.
+        The library now has a user-facing <code>grad</code> API, a full backward pass, ABS/SIGN support, and an executor copy mode.
+        Next focus: higher-order differentiation.
+      </p>
+
+      <div class="subsection">
+        <h3>What this means</h3>
+        <p>
+          Because the backward pass produces a symbolic graph — not a numeric trace — differentiating it a second time is structurally the same problem as differentiating the forward pass.
+          <code>grad(grad(f))</code> should work by running <code>compile_backwards</code> on the first-order gradient graph.
+          The main questions are around whether the existing backward rules, graph sharing between forward/grad topos, and the copy-mode executor hold up under composition.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>Known risks to investigate</h3>
+        <ul class="item-list">
+          <li><span class="bullet bullet-yellow"></span><strong>Backward rules that use <code>node</code> values</strong> — rules that reference intermediate forward values (e.g. <code>SOFTMAX</code>, <code>LOG</code>) need those values available when the second-order graph runs. May require the copy-mode executor to be used at every level.</li>
+          <li><span class="bullet bullet-yellow"></span><strong>Graph aliasing</strong> — the gradient graph shares <code>Symbol</code> nodes with the forward graph. A second <code>compile_backwards</code> call must not mutate shared nodes.</li>
+          <li><span class="bullet bullet-accent"></span><strong>ops without backward rules</strong> — <code>SIGN</code> has <code>pass</code> (gradient is zero), which is correct. Any other stub ops will silently drop second-order gradients — worth an audit.</li>
+        </ul>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s11">
+    <div class="entry-header">
+      <div class="entry-index">11</div>
+      <div class="entry-meta">
+        <h2><a href="#s11">Jacobian via _sym_grad vector case</a></h2>
+        <div class="date">2026-05-27</div>
+      </div>
+    </div>
+    <div class="entry-body">
+
+      <div class="subsection">
+        <h3>API</h3>
+        <p>
+          <code>grad([f1, f2, ...], wrt=[x, y, ...])</code> returns <code>(df, evalf)</code>.
+          <code>df(values)</code> returns a list-of-lists Jacobian: <code>J[i][j] = ∂fi/∂wrt[j]</code>.
+          <code>evalf(values)</code> returns a list of forward values, one per component.
+          <code>wrt</code> defaults to all VARIABLE nodes found across the component graphs.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>Single compile per component</h3>
+        <p>
+          Each component is compiled exactly once with <code>compile(fi, backwards=True)</code>.
+          Variables are collected from the resulting topo at the same time.
+          Grad topos for each <code>wrt</code> variable are compiled and saved immediately into a
+          <code>grad_maps[i]</code> dict (keyed by <code>id(var)</code>) before the next iteration's
+          <code>compile_backwards</code> call can overwrite <code>.grad</code> on shared nodes.
+          No pre-pass, no double compilation.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>Aliasing handled correctly</h3>
+        <p>
+          <code>compile_backwards</code> resets <code>.grad = None</code> on every node in the
+          current topo at the start of each call. Because <code>fi</code> and <code>fj</code> share
+          VARIABLE nodes, the second call would clobber the first's gradients if they weren't saved first.
+          The fix: <code>compiler.compile(var.grad)</code> is called for each variable immediately
+          after <code>compile(fi, backwards=True)</code> — the compiled topo is a value, not a reference
+          to <code>var.grad</code>, so later overwrites have no effect.
+        </p>
+      </div>
+
+      <div class="subsection">
+        <h3>Zero entries</h3>
+        <p>
+          If <code>fi</code> does not depend on <code>wrt[j]</code>, that variable won't appear in
+          <code>fi</code>'s topo and <code>grad_maps[i]</code> will have no entry for it.
+          <code>df</code> returns <code>np.zeros(())</code> for those entries.
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════ -->
+  <section class="entry" id="s12">
+    <div class="entry-header">
+      <div class="entry-index">12</div>
+      <div class="entry-meta">
+        <h2><a href="#s12">Higher-order differentiation</a></h2>
+        <div class="date">2026-05-27</div>
+      </div>
+    </div>
+    <div class="entry-body">
+
+      <div class="subsection">
+        <h3>API</h3>
+        <p>
+          <code>_sym_grad</code> scalar case now returns <code>(df, evalf, grad_syms)</code> where
+          <code>grad_syms</code> is the list of gradient Symbols (one per <code>wrt</code> variable).
+          These can be passed directly back into <code>grad()</code> for higher-order:
+        </p>
+        <ul class="item-list">
+          <li><span class="bullet bullet-green"></span><strong>nth-order scalar</strong> — <code>df, _, [dfdx] = grad(f, wrt=[x])</code> then <code>ddf, _, [d2fdx2] = grad(dfdx, wrt=[x])</code> etc. Each call compiles and differentiates the previous gradient Symbol.</li>
+          <li><span class="bullet bullet-green"></span><strong>Hessian via Jacobian path</strong> — <code>grad([df/dx, df/dy], wrt=[x, y])</code> returns the full Hessian matrix using the existing vector/Jacobian infrastructure from <a class="ref-chip" href="#s11">s11</a>.</li>
+        </ul>
+      </div>
+
+      <div class="subsection">
+        <h3>Bug: shape-reference nodes in higher-order topos</h3>
+        <p>
+          <code>UNBROADCAST(value, ref)</code>, <code>BROADCAST_TO_MATCH</code>, <code>RESHAPE_LIKE</code>,
+          and <code>SCATTER_LIKE</code> all take a second <code>ref</code> argument used only for its
+          runtime shape. That reference node has <code>requires_grad=True</code> (it's a live node in
+          the computation graph) but never receives a gradient — it's a dead-end by design.
+        </p>
+        <p>
+          In first-order differentiation this never surfaced because the reference nodes were always
+          forward-graph nodes whose <code>.grad</code> wasn't checked. In higher-order diff, these
+          reference nodes appear inside the gradient topo itself and get picked up by <code>_build_topo</code>.
+          <code>_backwards_node</code> then hit an assertion <code>node.grad is not None</code> for them.
+        </p>
+        <p>
+          <strong>Fix:</strong> replaced the assertion with a <code>return</code> — a node with
+          <code>grad=None</code> at backward time simply has zero gradient contribution and is skipped.
+          The assertion was appropriate for catching topo-order bugs in the scalar case but is wrong
+          in the presence of reference-argument nodes.
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+</div>
+</body>
+</html>

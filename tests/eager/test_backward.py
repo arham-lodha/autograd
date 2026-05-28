@@ -3,8 +3,8 @@ numerical finite differences.  This is the most important test file."""
 
 import numpy as np
 import pytest
-from autograd import Tensor, Engine
-from tests.conftest import numerical_grad
+from autograd.eager import Tensor, Engine
+from tests.eager.conftest import numerical_grad
 
 TOL = 1e-5  # tolerance for numerical vs analytical gradient comparison
 

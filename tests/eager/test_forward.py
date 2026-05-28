@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from autograd import Tensor
+from autograd.eager import Tensor
 
 
 class TestArithmeticForward:
