@@ -1,0 +1,4 @@
+CompileFlags:
+  Add:
+    - "-I/Users/arhamlodha/Projects/Dev/autograd/cpp/include"
+    - "-I/Users/arhamlodha/Projects/Dev/autograd/cpp/build/_deps/eigen-src"
