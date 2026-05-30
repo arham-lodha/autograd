@@ -15,8 +15,8 @@ struct ProgramNode {
   uint32_t inputs_offset = 0;
   uint32_t inputs_count = 0;
   uint32_t value_index = UINT32_MAX;
-  uint32_t axis = UINT32_MAX;
-  uint32_t axis2 = UINT32_MAX;
+  int32_t axis = -1;
+  int32_t axis2 = -1;
   bool keepdims = false;
   bool requires_grad = false;
 };
@@ -39,8 +39,8 @@ struct IntermediateProgramNode {
   Op op;
   std::vector<uint32_t> inputs;
   uint32_t value_index = UINT32_MAX;
-  uint32_t axis = UINT32_MAX;
-  uint32_t axis2 = UINT32_MAX;
+  int32_t axis = -1;
+  int32_t axis2 = -1;
   bool keepdims = false;
   bool retain = false;
   bool requires_grad = false;
@@ -81,7 +81,7 @@ public:
 
   std::vector<uint32_t> topological_sort(const Symbol &output);
 
-  Program compile_backwards(const Symbol &output);
+  std::unordered_map<uint32_t, Symbol> compile_backwards(const Symbol &output);
 
 private:
   Symbol make_constant(Graph &g, float value);

@@ -9,9 +9,9 @@ static Symbol set_shape(Symbol result, const std::vector<int> &shape) {
   uint32_t shape_offset = result.graph->shapes.size();
   for (int s : shape)
     result.graph->shapes.push_back(s);
-  result.graph->nodes[result.node_index].shape_offset = shape_offset;
-  result.graph->nodes[result.node_index].shape_count =
-      static_cast<uint32_t>(shape.size());
+  result.graph->nodes[result.node_index].shape.offset = shape_offset;
+  result.graph->nodes[result.node_index].shape.count =
+      static_cast<uint16_t>(shape.size());
   return result;
 }
 
@@ -19,8 +19,7 @@ static Symbol set_shape(Symbol result, const std::vector<int> &shape) {
 
 Symbol Symbol::operator[](int index) const {
   assert(graph != nullptr && "Symbol must be associated with a graph");
-  return graph->add_node(Op::GET_ITEM, {node_index},
-                         static_cast<uint32_t>(index));
+  return graph->add_node(Op::GET_ITEM, {node_index}, index);
 }
 
 // ── Addition ──────────────────────────────────────────────────────────────────
@@ -170,27 +169,27 @@ Symbol transpose(Symbol x) {
 
 Symbol sum(Symbol x, std::optional<int> axis, bool keepdims) {
   assert(x.graph != nullptr && "Symbol must be associated with a graph");
-  uint32_t ax = axis.has_value() ? static_cast<uint32_t>(axis.value()) : UINT32_MAX;
+  int32_t ax = axis.value_or(-1);
   return x.graph->add_node(Op::SUM, {x.node_index}, ax, UINT32_MAX, keepdims);
 }
 Symbol mean(Symbol x, std::optional<int> axis, bool keepdims) {
   assert(x.graph != nullptr && "Symbol must be associated with a graph");
-  uint32_t ax = axis.has_value() ? static_cast<uint32_t>(axis.value()) : UINT32_MAX;
+  int32_t ax = axis.value_or(-1);
   return x.graph->add_node(Op::MEAN, {x.node_index}, ax, UINT32_MAX, keepdims);
 }
 Symbol variance(Symbol x, std::optional<int> axis, bool keepdims) {
   assert(x.graph != nullptr && "Symbol must be associated with a graph");
-  uint32_t ax = axis.has_value() ? static_cast<uint32_t>(axis.value()) : UINT32_MAX;
+  int32_t ax = axis.value_or(-1);
   return x.graph->add_node(Op::VARIANCE, {x.node_index}, ax, UINT32_MAX, keepdims);
 }
 Symbol softmax(Symbol x, std::optional<int> axis) {
   assert(x.graph != nullptr && "Symbol must be associated with a graph");
-  uint32_t ax = axis.has_value() ? static_cast<uint32_t>(axis.value()) : UINT32_MAX;
+  int32_t ax = axis.value_or(-1);
   return x.graph->add_node(Op::SOFTMAX, {x.node_index}, ax);
 }
 Symbol size(Symbol x, std::optional<int> axis) {
   assert(x.graph != nullptr && "Symbol must be associated with a graph");
-  uint32_t ax = axis.has_value() ? static_cast<uint32_t>(axis.value()) : UINT32_MAX;
+  int32_t ax = axis.value_or(-1);
   return x.graph->add_node(Op::SIZE, {x.node_index}, ax);
 }
 
@@ -219,19 +218,16 @@ Symbol reshape_like(Symbol x, Symbol other) {
 }
 Symbol expand_dims(Symbol x, int axis) {
   assert(x.graph != nullptr && "Symbol must be associated with a graph");
-  return x.graph->add_node(Op::EXPAND_DIMS, {x.node_index},
-                           static_cast<uint32_t>(axis));
+  return x.graph->add_node(Op::EXPAND_DIMS, {x.node_index}, axis);
 }
 Symbol squeeze(Symbol x, std::optional<int> axis) {
   assert(x.graph != nullptr && "Symbol must be associated with a graph");
-  uint32_t ax = axis.has_value() ? static_cast<uint32_t>(axis.value()) : UINT32_MAX;
+  int32_t ax = axis.value_or(-1);
   return x.graph->add_node(Op::SQUEEZE, {x.node_index}, ax);
 }
 Symbol swap_axis(Symbol x, int axis1, int axis2) {
   assert(x.graph != nullptr && "Symbol must be associated with a graph");
-  return x.graph->add_node(Op::SWAP_AXIS, {x.node_index},
-                           static_cast<uint32_t>(axis1),
-                           static_cast<uint32_t>(axis2));
+  return x.graph->add_node(Op::SWAP_AXIS, {x.node_index}, axis1, axis2);
 }
 Symbol unbroadcast(Symbol x, Symbol other) {
   assert(x.graph == other.graph && "Symbols must belong to the same graph");

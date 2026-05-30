@@ -562,7 +562,7 @@ class Compiler:
         return new_topo, changed
 
     def compile(self, symbol: Symbol, max_iterations: int = 10, skip_optimization: bool = False, backwards: bool = False) -> List[Symbol]:
-
+  
         topo: List[Symbol] = self._build_topo(symbol)
 
         if not skip_optimization:
