@@ -27,8 +27,9 @@ FetchContent_MakeAvailable(Catch2)
 # ── Library ────────────────────────────────────────────────────────────────────
 add_library(autograd
   src/symbol.cpp
-  src/graph.cpp
-  src/compiler.cpp
+  src/graph/graph.cpp
+  src/graph/compiler.cpp
+  src/backward.cpp
   src/executor.cpp
 )
 target_include_directories(autograd PUBLIC include)

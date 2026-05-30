@@ -27,8 +27,15 @@ Symbol Graph::constant(const std::vector<float> &value) {
 }
 
 Symbol Graph::constant(float scalar) {
+  if (this->scalar_constants.contains(scalar)) {
+    return Symbol{.node_index = this->scalar_constants[scalar], .graph = this};
+  }
+
   Eigen::MatrixXf mat(1, 1);
   mat(0, 0) = scalar;
+
+  this->scalar_constants[scalar] = this->values.size();
+
   return constant(mat);
 }
 
@@ -44,11 +51,10 @@ Symbol Graph::add_node(Op op, std::initializer_list<uint32_t> node_inputs,
   for (uint32_t i = 0; i < input_count; i++) {
     uint32_t inp_idx = node_inputs.begin()[i];
 
-    requires_grad |= nodes[inp_idx].requires_grad;
-
-    if (inp_idx >= nodes.size()) {
+    if (inp_idx >= nodes.size())
       throw std::runtime_error("Input index out of bounds");
-    }
+
+    requires_grad |= nodes[inp_idx].requires_grad;
 
     if (i < 2)
       inline_inputs[i] = inp_idx;

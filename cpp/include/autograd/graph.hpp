@@ -48,6 +48,19 @@ struct Node {
       0}; // reserved for future use; ensures sizeof(Node) is a multiple of 16
 };
 
+struct Program {
+  std::vector<Node> nodes;
+
+  std::vector<uint32_t> inputs;        // flat CSR input-index list
+  std::vector<uint32_t> shapes;        // flat CSR shape data
+  std::vector<Eigen::MatrixXf> values; // constant values
+
+  std::vector<uint32_t>
+      input_nodes; // indices of input nodes (for multi-input graphs)
+  std::vector<uint32_t>
+      output_nodes; // indices of output nodes (for multi-output graphs)
+};
+
 class Graph {
 public:
   Graph() = default;
@@ -71,6 +84,31 @@ public:
                   int32_t axis = -1, int32_t axis2 = -1, bool keepdims = false);
   void retain(Symbol sym); // mark a node to be retained in the forward
                            // compilation output
+
+  Program compile(const std::vector<Symbol> &inputs,
+                  const std::vector<Symbol> &outputs,
+                  int optimization_passes = 10);
+
+private:
+  std::vector<uint32_t> topological_sort(const std::vector<Symbol> &outputs);
+  Program optimize(Program &prog, int optimization_passes,
+                   std::vector<uint32_t> &old_to_new_index);
+  bool canonicalize(const Program &read, Program &write,
+                    std::vector<uint32_t> &old_to_new_index);
+  bool addition_folding(const Program &read, Program &write,
+                        std::vector<uint32_t> &old_to_new_index);
+  bool constant_folding(const Program &read, Program &write,
+                        std::vector<uint32_t> &old_to_new_index);
+  bool multiplication_folding(const Program &read, Program &write,
+                              std::vector<uint32_t> &old_to_new_index);
+  bool algebraic_simplification(const Program &read, Program &write,
+                                std::vector<uint32_t> &old_to_new_index);
+  bool decanonicalize(const Program &read, Program &write,
+                      std::vector<uint32_t> &old_to_new_index);
+  bool dead_code_elimination(const Program &read, Program &write,
+                             std::vector<uint32_t> &old_to_new_index);
+  void save_node(const Node &n, const Program &read, Program &write,
+                 std::vector<uint32_t> &old_to_new_index);
 };
 
 } // namespace autograd
