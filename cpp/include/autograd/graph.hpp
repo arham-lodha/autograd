@@ -11,6 +11,15 @@ namespace autograd {
 
 struct Symbol; // defined in symbol.hpp — do NOT include symbol.hpp here
                // (circular)
+
+enum : uint32_t {
+  K_ONE = 0,
+  K_ZERO = 1,
+  K_NEG_ONE = 2,
+  K_HALF = 3,
+  K_COUNT = 4
+};
+
 struct Axes {
   int32_t axis, axis2;
 };
@@ -94,21 +103,29 @@ private:
   Program optimize(Program &prog, int optimization_passes,
                    std::vector<uint32_t> &old_to_new_index);
   bool canonicalize(const Program &read, Program &write,
-                    std::vector<uint32_t> &old_to_new_index);
-  bool addition_folding(const Program &read, Program &write,
-                        std::vector<uint32_t> &old_to_new_index);
+                    std::vector<uint32_t> &old_to_new_index,
+                    std::array<uint32_t, K_COUNT> &slots);
+  bool addition_multiplication_folding(const Program &read, Program &write,
+                                       std::vector<uint32_t> &old_to_new_index);
   bool constant_folding(const Program &read, Program &write,
-                        std::vector<uint32_t> &old_to_new_index);
-  bool multiplication_folding(const Program &read, Program &write,
-                              std::vector<uint32_t> &old_to_new_index);
+                        std::vector<uint32_t> &old_to_new_index,
+                        std::vector<Eigen::MatrixXf> &arena);
   bool algebraic_simplification(const Program &read, Program &write,
-                                std::vector<uint32_t> &old_to_new_index);
+                                std::vector<uint32_t> &old_to_new_index,
+                                std::vector<Eigen::MatrixXf> &arena);
   bool decanonicalize(const Program &read, Program &write,
-                      std::vector<uint32_t> &old_to_new_index);
+                      std::vector<uint32_t> &old_to_new_index,
+                      std::vector<Eigen::MatrixXf> &arena);
   bool dead_code_elimination(const Program &read, Program &write,
-                             std::vector<uint32_t> &old_to_new_index);
+                             std::vector<uint32_t> &old_to_new_index,
+                             std::vector<Eigen::MatrixXf> &arena);
   void save_node(const Node &n, const Program &read, Program &write,
-                 std::vector<uint32_t> &old_to_new_index);
+                 std::vector<uint32_t> &old_to_new_index, uint32_t old_idx);
+  void move_inputs_outputs(const Program &read, Program &write,
+                           std::vector<uint32_t> &old_to_new_index);
+
+  void clean_write_and_remap(const Program &read, Program &write,
+                             std::vector<uint32_t> &old_to_new_index);
 };
 
 } // namespace autograd

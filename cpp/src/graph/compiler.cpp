@@ -1,7 +1,13 @@
 #include "autograd/graph.hpp"
+#include "autograd/ops.hpp"
 #include "autograd/symbol.hpp"
+#include <algorithm>
+#include <array>
+#include <cstddef>
 #include <cstdint>
+#include <sys/types.h>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace autograd {
@@ -144,69 +150,277 @@ Program Graph::compile(const std::vector<Symbol> &inputs,
   return program;
 }
 
+static Eigen::MatrixXf scalar_mat(float v) {
+  Eigen::MatrixXf m(1, 1);
+  m(0, 0) = v;
+  return m;
+}
+
+static uint32_t well_known(uint32_t slot, std::array<uint32_t, K_COUNT> &slots,
+                           Program &write) {
+  if (slots[slot] != UINT32_MAX)
+    return slots[slot];
+
+  Node c;
+  c.operation = Op::CONSTANT;
+  c.value_index = slot;
+  write.nodes.push_back(c);
+  slots[slot] = write.nodes.size() - 1;
+  return write.nodes.size() - 1;
+}
+
 Program Graph::optimize(Program &program, int optimization_passes,
                         std::vector<uint32_t> &old_to_new_index) {
+  // One append only value arena, shared by both buffers and every pass
+  // Nodes reference it via value_index; matrixes are appended, never copied
+  std::vector<Eigen::MatrixXf> arena;
+  arena.reserve(K_COUNT + program.values.size());
+  arena.push_back(scalar_mat(1.0f));
+  arena.push_back(scalar_mat(0.0f));
+  arena.push_back(scalar_mat(-1.0f));
+  arena.push_back(scalar_mat(0.5f));
+  for (Eigen::MatrixXf &m : program.values)
+    arena.push_back(std::move(m));
+
+  for (Node &n : program.nodes) {
+    if (n.operation == Op::CONSTANT)
+      n.value_index += K_COUNT;
+  }
+
   // Allocate a secondary buffer for ping-pong optimization. We will alternate
   // between writing to program and alt_program on each pass to avoid
   // unnecessary copying. The final result will be copied back to program at the
   // end if needed. program should be allocated with enough capacity to alllow
   // for growth during optimization, but alt_program starts empty and will be
   // filled in on the first pass.
-  Program alt_program;
-  alt_program.nodes.reserve(program.nodes.size());
-  alt_program.inputs.reserve(program.inputs.size());
-  alt_program.values.reserve(program.values.size());
+  Program a = std::move(program), b;
+  a.values.clear();
+  b.nodes.reserve(a.nodes.size());
+  b.inputs.reserve(a.inputs.size());
+  b.shapes.reserve(a.shapes.size());
+  b.output_nodes.reserve(a.output_nodes.size());
+  b.input_nodes.reserve(a.input_nodes.size());
+
+  Program *read = &a, *write = &b;
+  auto flip = [&] { std::swap(read, write); };
+
+  std::array<uint32_t, K_COUNT> slots = {UINT32_MAX, UINT32_MAX, UINT32_MAX,
+                                         UINT32_MAX};
 
   for (int i = 0; i < optimization_passes; i++) {
     bool changed = false;
-    changed |= this->canonicalize(program, alt_program, old_to_new_index);
-    changed |= this->addition_folding(alt_program, program, old_to_new_index);
+    changed |= this->canonicalize(*read, *write, old_to_new_index, slots);
+    flip();
     changed |=
-        this->multiplication_folding(program, alt_program, old_to_new_index);
-    changed |= this->constant_folding(alt_program, program, old_to_new_index);
+        this->addition_multiplication_folding(*read, *write, old_to_new_index);
+    flip();
+    changed |= this->constant_folding(*read, *write, old_to_new_index, arena);
+    flip();
     changed |=
-        this->algebraic_simplification(program, alt_program, old_to_new_index);
+        this->algebraic_simplification(*read, *write, old_to_new_index, arena);
+    flip();
     changed |=
-        this->dead_code_elimination(alt_program, program, old_to_new_index);
-
+        this->dead_code_elimination(*read, *write, old_to_new_index, arena);
+    flip();
     if (!changed) {
       break; // stop if no changes were made in this pass
     }
   }
 
-  this->decanonicalize(program, alt_program, old_to_new_index);
+  this->decanonicalize(*read, *write, old_to_new_index, arena);
 
-  return program;
+  // clean up arena and attach to write
+
+  return *write;
 }
 
-void Graph::canonicalize(const Program &read, Program &write) {
+void Graph::clean_write_and_remap(const Program &read, Program &write,
+                                  std::vector<uint32_t> &old_to_new_index) {
+  write.nodes.clear();
+  write.inputs.clear();
+  write.shapes.clear();
+  write.input_nodes.clear();
+  write.output_nodes.clear();
+
+  old_to_new_index.assign(read.nodes.size(), UINT32_MAX);
+}
+
+bool Graph::canonicalize(const Program &read, Program &write,
+                         std::vector<uint32_t> &old_to_new_index,
+                         std::array<uint32_t, K_COUNT> &slots) {
+
   // We want to turn various operations into a canonical form temporarily for
   // optimization_passes SUB(a, b) -> ADD(a, MULT(-1, b)) NEG(a) -> MULT(-1, b);
 
-  write.nodes.clear();
-  write.inputs.clear();
-  write.values.clear();
-
+  clean_write_and_remap(read, write, old_to_new_index);
   bool changed = false;
+
+  for (uint32_t old_idx = 0; old_idx < read.nodes.size(); old_idx++) {
+    const Node &node = read.nodes[old_idx];
+    switch (node.operation) {
+    case Op::NEG: {
+      uint32_t param = old_to_new_index[node.inputs[0]];
+      uint32_t neg_one = well_known(K_NEG_ONE, slots, write);
+      Node multiply;
+      multiply.operation = Op::MULTIPLY;
+      multiply.input_count = 2;
+      multiply.inputs[0] = param;
+      multiply.inputs[1] = neg_one;
+      multiply.requires_grad = node.requires_grad;
+      multiply.retain = node.retain;
+      write.nodes.push_back(multiply);
+      old_to_new_index[old_idx] = static_cast<uint32_t>(write.nodes.size() - 1);
+      changed = true;
+      break;
+    }
+    case Op::SUB: {
+      uint32_t a = old_to_new_index[node.inputs[0]];
+      uint32_t b = old_to_new_index[node.inputs[1]];
+      uint32_t neg_one = well_known(K_NEG_ONE, slots, write);
+      Node multiply;
+      multiply.operation = Op::MULTIPLY;
+      multiply.input_count = 2;
+      multiply.inputs[0] = b;
+      multiply.inputs[1] = neg_one;
+      multiply.requires_grad = read.nodes[node.inputs[1]].requires_grad;
+      write.nodes.push_back(multiply);
+      uint32_t multiply_idx = static_cast<uint32_t>(write.nodes.size() - 1);
+
+      Node add;
+      add.operation = Op::ADD;
+      add.input_count = 2;
+      add.inputs[0] = a;
+      add.inputs[1] = multiply_idx;
+      add.requires_grad = node.requires_grad;
+      add.retain = node.retain;
+      write.nodes.push_back(add);
+      old_to_new_index[old_idx] = static_cast<uint32_t>(write.nodes.size() - 1);
+      changed = true;
+
+      break;
+    }
+    case Op::SQRT: {
+      uint32_t param = old_to_new_index[node.inputs[0]];
+      uint32_t half = well_known(K_HALF, slots, write);
+      Node power;
+      power.operation = Op::POWER;
+      power.inputs[0] = param;
+      power.inputs[1] = half;
+      power.requires_grad = node.requires_grad;
+      power.retain = node.retain;
+      write.nodes.push_back(power);
+      old_to_new_index[old_idx] = static_cast<uint32_t>(write.nodes.size() - 1);
+      changed = true;
+      break;
+    }
+    default: {
+      save_node(node, read, write, old_to_new_index, old_idx);
+      break;
+    }
+    }
+  }
+
+  this->move_inputs_outputs(read, write, old_to_new_index);
 
   return changed;
 }
 
+bool Graph::addition_multiplication_folding(
+    const Program &read, Program &write,
+    std::vector<uint32_t> &old_to_new_index) {
+
+  // This function folds both addition and multiplication. It performs a dfs
+  // search though the children of a addition/multiplication node
+  this->clean_write_and_remap(read, write, old_to_new_index);
+
+  bool changed = false;
+
+  for (uint32_t old_idx = 0; old_idx < read.nodes.size(); old_idx++) {
+
+    const Node &node = read.nodes[old_idx];
+
+    if (node.operation == Op::ADD || node.operation == Op::MULTIPLY) {
+      Op target = node.operation;
+      std::vector<uint32_t> children;
+      std::stack<uint32_t> stack;
+
+      for (uint32_t i = 0; i < node.input_count; i++) {
+        stack.push(i < 2 ? old_to_new_index[node.inputs[i]]
+                         : old_to_new_index[read.inputs[node.input_pool_offset +
+                                                        (i - 2)]]);
+      }
+
+      while (!stack.empty()) {
+        uint32_t node_index = stack.top();
+        stack.pop();
+        if (write.nodes[node_index].operation != target ||
+            write.nodes[node_index].retain) {
+          children.push_back(node_index);
+        } else {
+          for (uint32_t i = 0; i < write.nodes[node_index].input_count; i++) {
+            stack.push(
+                i < 2 ? write.nodes[node_index].inputs[i]
+                      : write.inputs[write.nodes[node_index].input_pool_offset +
+                                     (i - 2)]);
+          }
+        }
+      }
+
+      if (children.size() != node.input_count) {
+        Node new_add;
+        new_add.operation = target;
+        new_add.input_count = children.size();
+        new_add.input_pool_offset = write.inputs.size();
+        new_add.requires_grad = node.requires_grad;
+        new_add.retain = node.retain;
+
+        for (uint32_t i = 0; i < children.size(); i++) {
+          if (i < 2) {
+            new_add.inputs[i] = children[i];
+          } else {
+            write.inputs.push_back(children[i]);
+          }
+        }
+
+        // technically folding the addition shouldn't change the number of total
+        // nodes. it just introduces unreachable nodes
+        old_to_new_index[old_idx] = write.nodes.size();
+        write.nodes.push_back(new_add);
+        changed = true;
+      } else
+        this->save_node(node, read, write, old_to_new_index, old_idx);
+    } else
+      this->save_node(node, read, write, old_to_new_index, old_idx);
+  }
+
+  this->move_inputs_outputs(read, write, old_to_new_index);
+  return changed;
+}
+
+bool Graph::constant_folding(const Program &read, Program &write,
+                             std::vector<uint32_t> &old_to_new_index,
+                             std::vector<Eigen::MatrixXf> &arena) {
+  this->clean_write_and_remap(read, write, old_to_new_index);
+  bool changed = false;
+
+  this->move_inputs_outputs(read, write, old_to_new_index);
+  return changed;
+}
+
 void Graph::save_node(const Node &n, const Program &read, Program &write,
-                      std::vector<uint32_t> &old_to_new_index) {
+                      std::vector<uint32_t> &old_to_new_index,
+                      uint32_t old_idx) {
   Node new_node{n}; // copy to modify in place
+
+  new_node.input_pool_offset = write.inputs.size();
 
   for (size_t i = 0; i < n.input_count; i++) {
     if (i < 2) {
       new_node.inputs[i] = old_to_new_index[n.inputs[i]];
     } else {
-      write.inputs.push_back(read.inputs[n.input_pool_offset + (i - 2)]);
+      write.inputs.push_back(
+          old_to_new_index[read.inputs[n.input_pool_offset + (i - 2)]]);
     }
-  }
-
-  if (new_node.operation == Op::CONSTANT) {
-    write.values.push_back(read.values[n.value_index]);
-    new_node.value_index = write.values.size() - 1;
   }
 
   if (new_node.operation == Op::RESHAPE ||
@@ -220,8 +434,22 @@ void Graph::save_node(const Node &n, const Program &read, Program &write,
   }
 
   write.nodes.push_back(new_node);
-  old_to_new_index[&n - &read.nodes[0]] =
-      write.nodes.size() - 1; // map old index to new
+  old_to_new_index[old_idx] = write.nodes.size() - 1; // map old index to new
+}
+
+void Graph::move_inputs_outputs(const Program &read, Program &write,
+                                std::vector<uint32_t> &old_to_new_index) {
+  for (size_t i = 0; i < read.input_nodes.size(); i++) {
+    write.input_nodes.push_back(read.input_nodes[i] != UINT32_MAX
+                                    ? old_to_new_index[read.input_nodes[i]]
+                                    : UINT32_MAX);
+  }
+
+  for (size_t i = 0; i < read.output_nodes.size(); i++) {
+    write.output_nodes.push_back(read.output_nodes[i] != UINT32_MAX
+                                     ? old_to_new_index[read.output_nodes[i]]
+                                     : UINT32_MAX);
+  }
 }
 
 } // namespace autograd
