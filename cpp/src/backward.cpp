@@ -1,12 +1,15 @@
 #include "autograd/backward.hpp"
+#include "autograd/graph.hpp"
+#include <cstddef>
+#include <optional>
 #include <stack>
 #include <stdexcept>
-#include <unordered_map>
+#include <vector>
 
 namespace autograd {
 
 static void backwards_node(Graph &graph, uint32_t index,
-                           std::unordered_map<uint32_t, Symbol> &grads) {
+                           std::vector<std::optional<Symbol>> &grads) {
   Node &node = graph.nodes[index];
 
   if (node.operation == Op::CONSTANT || node.operation == Op::PLACEHOLDER ||
@@ -16,10 +19,14 @@ static void backwards_node(Graph &graph, uint32_t index,
   if (!node.requires_grad)
     return;
 
-  if (grads.find(index) == grads.end())
+  if (!grads[index].has_value())
     return;
 
-  Symbol grad = grads[index];
+  Symbol grad = *grads[index];
+
+  auto accum = [&](uint32_t idx, Symbol g) {
+    grads[idx] = grads[idx].has_value() ? *grads[idx] + g : g;
+  };
 
   std::vector<Symbol> prev;
   for (uint32_t i = 0; i < node.input_count; i++) {
@@ -40,8 +47,7 @@ static void backwards_node(Graph &graph, uint32_t index,
   case Op::ADD:
     for (uint32_t i = 0; i < node.input_count; i++)
       if (needs_grad(prev[i]))
-        grads[prev[i].node_index] =
-            grads[prev[i].node_index] + unbroadcast(grad, prev[i]);
+        accum(prev[i].node_index, unbroadcast(grad, prev[i]));
     break;
 
   case Op::MULTIPLY:
@@ -51,8 +57,7 @@ static void backwards_node(Graph &graph, uint32_t index,
         for (uint32_t j = 0; j < node.input_count; j++)
           if (i != j)
             g = g * prev[j];
-        grads[prev[i].node_index] =
-            grads[prev[i].node_index] + unbroadcast(g, prev[i]);
+        accum(prev[i].node_index, unbroadcast(g, prev[i]));
       }
     }
     break;
@@ -60,78 +65,75 @@ static void backwards_node(Graph &graph, uint32_t index,
   case Op::SUB: {
     Symbol a = prev[0], b = prev[1];
     if (needs_grad(a))
-      grads[a.node_index] = grads[a.node_index] + unbroadcast(grad, a);
+      accum(a.node_index, unbroadcast(grad, a));
     if (needs_grad(b))
-      grads[b.node_index] = grads[b.node_index] + unbroadcast(-grad, b);
+      accum(b.node_index, unbroadcast(-grad, b));
     break;
   }
 
   case Op::NEG:
     if (needs_grad(prev[0]))
-      grads[prev[0].node_index] = grads[prev[0].node_index] + (-grad);
+      accum(prev[0].node_index, -grad);
     break;
 
   case Op::POWER: {
     Symbol base = prev[0], exp_sym = prev[1];
     Symbol output{.node_index = index, .graph = &graph};
     if (needs_grad(base))
-      grads[base.node_index] = grads[base.node_index] +
-          unbroadcast(exp_sym * pow(base, exp_sym - 1.0f) * grad, base);
+      accum(base.node_index,
+            unbroadcast(exp_sym * pow(base, exp_sym - 1.0f) * grad, base));
     if (needs_grad(exp_sym))
-      grads[exp_sym.node_index] = grads[exp_sym.node_index] +
-          unbroadcast(output * log(base) * grad, exp_sym);
+      accum(exp_sym.node_index,
+            unbroadcast(output * log(base) * grad, exp_sym));
     break;
   }
 
   case Op::EXP: {
     Symbol output{.node_index = index, .graph = &graph};
     if (needs_grad(prev[0]))
-      grads[prev[0].node_index] = grads[prev[0].node_index] + output * grad;
+      accum(prev[0].node_index, output * grad);
     break;
   }
 
   case Op::LOG:
     if (needs_grad(prev[0]))
-      grads[prev[0].node_index] = grads[prev[0].node_index] + grad / prev[0];
+      accum(prev[0].node_index, grad / prev[0]);
     break;
 
   case Op::MATMUL: {
     Symbol a = prev[0], b = prev[1];
     if (needs_grad(a))
-      grads[a.node_index] = grads[a.node_index] + matmul(grad, transpose(b));
+      accum(a.node_index, matmul(grad, transpose(b)));
     if (needs_grad(b))
-      grads[b.node_index] = grads[b.node_index] + matmul(transpose(a), grad);
+      accum(b.node_index, matmul(transpose(a), grad));
     break;
   }
 
   case Op::IDENTITY:
     if (needs_grad(prev[0]))
-      grads[prev[0].node_index] = grads[prev[0].node_index] + grad;
+      accum(prev[0].node_index, grad);
     break;
 
   case Op::TRANSPOSE:
     if (needs_grad(prev[0]))
-      grads[prev[0].node_index] = grads[prev[0].node_index] + transpose(grad);
+      accum(prev[0].node_index, transpose(grad));
     break;
 
   case Op::SQRT: {
     Symbol output{.node_index = index, .graph = &graph};
     if (needs_grad(prev[0]))
-      grads[prev[0].node_index] =
-          grads[prev[0].node_index] + grad / (2.0f * output);
+      accum(prev[0].node_index, grad / (2.0f * output));
     break;
   }
 
   case Op::ABS:
     if (needs_grad(prev[0]))
-      grads[prev[0].node_index] =
-          grads[prev[0].node_index] + grad * sign(prev[0]);
+      accum(prev[0].node_index, grad * sign(prev[0]));
     break;
 
   case Op::RELU:
     if (needs_grad(prev[0]))
-      grads[prev[0].node_index] =
-          grads[prev[0].node_index] + grad * (prev[0] > 0.0f);
+      accum(prev[0].node_index, grad * (prev[0] > 0.0f));
     break;
 
   case Op::SUM: {
@@ -140,8 +142,7 @@ static void backwards_node(Graph &graph, uint32_t index,
       Symbol g = (!node.keepdims && has_axis())
                      ? expand_dims(grad, node.axes.axis)
                      : grad;
-      grads[inp.node_index] =
-          grads[inp.node_index] + broadcast_to_match(g, inp);
+      accum(inp.node_index, broadcast_to_match(g, inp));
     }
     break;
   }
@@ -153,8 +154,7 @@ static void backwards_node(Graph &graph, uint32_t index,
                      ? expand_dims(grad, node.axes.axis)
                      : grad;
       Symbol n = size(inp, ax_opt());
-      grads[inp.node_index] =
-          grads[inp.node_index] + broadcast_to_match(g, inp) / n;
+      accum(inp.node_index, broadcast_to_match(g, inp) / n);
     }
     break;
   }
@@ -167,8 +167,8 @@ static void backwards_node(Graph &graph, uint32_t index,
                      : grad;
       Symbol n = size(inp, ax_opt());
       Symbol mu = mean(inp, ax_opt(), true);
-      grads[inp.node_index] = grads[inp.node_index] +
-          broadcast_to_match(g, inp) * 2.0f * (inp - mu) / n;
+      accum(inp.node_index,
+            broadcast_to_match(g, inp) * 2.0f * (inp - mu) / n);
     }
     break;
   }
@@ -178,8 +178,7 @@ static void backwards_node(Graph &graph, uint32_t index,
     Symbol output{.node_index = index, .graph = &graph};
     if (needs_grad(inp)) {
       Symbol ntg = output * grad;
-      grads[inp.node_index] = grads[inp.node_index] +
-          ntg - sum(ntg, ax_opt(), true) * output;
+      accum(inp.node_index, ntg - sum(ntg, ax_opt(), true) * output);
     }
     break;
   }
@@ -188,15 +187,14 @@ static void backwards_node(Graph &graph, uint32_t index,
   case Op::BROADCAST_TO_MATCH: {
     Symbol inp = prev[0];
     if (needs_grad(inp))
-      grads[inp.node_index] = grads[inp.node_index] + unbroadcast(grad, inp);
+      accum(inp.node_index, unbroadcast(grad, inp));
     break;
   }
 
   case Op::UNBROADCAST: {
     Symbol inp = prev[0];
     if (needs_grad(inp))
-      grads[inp.node_index] =
-          grads[inp.node_index] + broadcast_to_match(grad, inp);
+      accum(inp.node_index, broadcast_to_match(grad, inp));
     break;
   }
 
@@ -204,15 +202,14 @@ static void backwards_node(Graph &graph, uint32_t index,
   case Op::RESHAPE_LIKE: {
     Symbol inp = prev[0];
     if (needs_grad(inp))
-      grads[inp.node_index] = grads[inp.node_index] + reshape_like(grad, inp);
+      accum(inp.node_index, reshape_like(grad, inp));
     break;
   }
 
   case Op::EXPAND_DIMS: {
     Symbol inp = prev[0];
     if (needs_grad(inp))
-      grads[inp.node_index] =
-          grads[inp.node_index] + squeeze(grad, ax_opt());
+      accum(inp.node_index, squeeze(grad, ax_opt()));
     break;
   }
 
@@ -221,7 +218,7 @@ static void backwards_node(Graph &graph, uint32_t index,
     if (needs_grad(inp)) {
       Symbol g = has_axis() ? expand_dims(grad, node.axes.axis)
                             : reshape_like(grad, inp);
-      grads[inp.node_index] = grads[inp.node_index] + g;
+      accum(inp.node_index, g);
     }
     break;
   }
@@ -229,31 +226,27 @@ static void backwards_node(Graph &graph, uint32_t index,
   case Op::SWAP_AXIS: {
     Symbol inp = prev[0];
     if (needs_grad(inp))
-      grads[inp.node_index] = grads[inp.node_index] +
-          swap_axis(grad, node.axes.axis, node.axes.axis2);
+      accum(inp.node_index, swap_axis(grad, node.axes.axis, node.axes.axis2));
     break;
   }
 
   case Op::VECTOR:
     for (uint32_t i = 0; i < node.input_count; i++)
       if (needs_grad(prev[i]))
-        grads[prev[i].node_index] =
-            grads[prev[i].node_index] + get_item(grad, (int)i);
+        accum(prev[i].node_index, get_item(grad, (int)i));
     break;
 
   case Op::GET_ITEM: {
     Symbol inp = prev[0];
     if (needs_grad(inp))
-      grads[inp.node_index] =
-          grads[inp.node_index] + scatter_like(grad, inp, node.axes.axis);
+      accum(inp.node_index, scatter_like(grad, inp, node.axes.axis));
     break;
   }
 
   case Op::SCATTER_LIKE: {
     Symbol inp = prev[0];
     if (needs_grad(inp))
-      grads[inp.node_index] =
-          grads[inp.node_index] + get_item(grad, node.axes.axis);
+      accum(inp.node_index, get_item(grad, node.axes.axis));
     break;
   }
 
@@ -262,8 +255,8 @@ static void backwards_node(Graph &graph, uint32_t index,
   }
 }
 
-std::unordered_map<uint32_t, Symbol> backwards(const Symbol &symbol) {
-  std::unordered_map<uint32_t, Symbol> grads;
+std::vector<std::optional<Symbol>> backwards(const Symbol &symbol) {
+  std::vector<std::optional<Symbol>> grads(symbol.graph->nodes.size());
 
   if (!symbol.graph)
     throw std::runtime_error("backwards: symbol has no graph");
@@ -284,6 +277,9 @@ std::unordered_map<uint32_t, Symbol> backwards(const Symbol &symbol) {
         symbol.graph->constant(Eigen::MatrixXf::Ones(1, 1));
   }
 
+  std::vector<bool> pushed(symbol.graph->nodes.size(), false);
+  pushed[symbol.node_index] = true;
+
   std::stack<Symbol> stack;
   stack.push(symbol);
 
@@ -300,10 +296,9 @@ std::unordered_map<uint32_t, Symbol> backwards(const Symbol &symbol) {
       uint32_t input_id =
           i < 2 ? node.inputs[i]
                 : current.graph->inputs[node.input_pool_offset + (i - 2)];
-      if (!grads.count(input_id) &&
+      if (!pushed[input_id] &&
           current.graph->nodes[input_id].requires_grad) {
-        grads[input_id] =
-            current.graph->constant(Eigen::MatrixXf::Zero(1, 1));
+        pushed[input_id] = true;
         stack.push(Symbol{.node_index = input_id, .graph = current.graph});
       }
     }

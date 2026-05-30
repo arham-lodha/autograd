@@ -4,6 +4,7 @@
 #include <Eigen/Dense>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace autograd {
@@ -74,9 +75,9 @@ Symbol size(Symbol x, std::optional<int> axis = std::nullopt);
 
 // ── Shape
 // ─────────────────────────────────────────────────────────────────────
-Symbol broadcast_to(Symbol x, std::vector<int> shape);
+Symbol broadcast_to(Symbol x, std::span<int> shape);
 Symbol broadcast_to_match(Symbol x, Symbol other);
-Symbol reshape(Symbol x, std::vector<int> shape);
+Symbol reshape(Symbol x, std::span<int> shape);
 Symbol reshape_like(Symbol x, Symbol other);
 Symbol expand_dims(Symbol x, int axis);
 Symbol squeeze(Symbol x, std::optional<int> axis = std::nullopt);

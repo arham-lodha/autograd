@@ -1,6 +1,7 @@
 #include "autograd/compiler.hpp"
 #include "autograd/symbol.hpp"
 #include <Eigen/Dense>
+#include <algorithm>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
@@ -43,38 +44,38 @@ TEST_CASE("placeholder has PLACEHOLDER op", "[graph]") {
 }
 
 // ── CSR wiring ────────────────────────────────────────────────────────────────
+// Binary ops (input_count == 2) store both inputs inline in node.inputs[0/1].
+// The g.inputs CSR pool is only used for n-ary ops with more than 2 children.
 
-TEST_CASE("binary op wires two inputs in CSR", "[graph]") {
+TEST_CASE("binary op wires two inputs inline", "[graph]") {
   Graph g;
   Symbol x = g.variable();
   Symbol y = g.variable();
   Symbol z = x + y;
   const Node &n = g.nodes[z.node_index];
   REQUIRE(n.input_count == 2);
-  uint32_t a = g.inputs[n.input_offset + 0];
-  uint32_t b = g.inputs[n.input_offset + 1];
+  uint32_t a = n.inputs[0];
+  uint32_t b = n.inputs[1];
   REQUIRE(((a == x.node_index && b == y.node_index) ||
            (a == y.node_index && b == x.node_index)));
 }
 
-TEST_CASE("unary op wires exactly one input", "[graph]") {
+TEST_CASE("unary op wires exactly one input inline", "[graph]") {
   Graph g;
   Symbol x = g.variable();
   Symbol e = exp(x);
   const Node &n = g.nodes[e.node_index];
   REQUIRE(n.input_count == 1);
-  REQUIRE(g.inputs[n.input_offset] == x.node_index);
+  REQUIRE(n.inputs[0] == x.node_index);
 }
 
-TEST_CASE("multiple ops build independent CSR slices", "[graph]") {
+TEST_CASE("multiple ops build independent nodes", "[graph]") {
   Graph g;
-  Symbol x = g.variable();
-  Symbol y = g.variable();
+  Symbol x   = g.variable();
+  Symbol y   = g.variable();
   Symbol add = x + y;
   Symbol mul = x * y;
-  // both ops present, independent slices, no aliasing
-  REQUIRE(g.nodes[add.node_index].input_offset !=
-          g.nodes[mul.node_index].input_offset);
+  REQUIRE(add.node_index != mul.node_index);
   REQUIRE(g.nodes[add.node_index].input_count == 2);
   REQUIRE(g.nodes[mul.node_index].input_count == 2);
 }
@@ -97,13 +98,12 @@ TEST_CASE("float rhs operators insert a constant node", "[symbol]") {
   Graph g;
   Symbol x = g.variable();
   Symbol z = x + 5.0f;
-  // z is ADD; one input is x, the other is a fresh CONSTANT(5)
   const Node &n = g.nodes[z.node_index];
   REQUIRE(n.operation == Op::ADD);
   REQUIRE(n.input_count == 2);
   bool found_const = false;
   for (uint32_t i = 0; i < 2; i++) {
-    uint32_t inp = g.inputs[n.input_offset + i];
+    uint32_t inp = n.inputs[i];
     if (g.nodes[inp].operation == Op::CONSTANT)
       found_const = true;
   }
@@ -115,7 +115,6 @@ TEST_CASE("division is implemented as multiply-by-reciprocal", "[symbol]") {
   Symbol x = g.variable();
   Symbol y = g.variable();
   Symbol z = x / y;
-  // x / y → x * pow(y, -1) → MULTIPLY at root
   REQUIRE(g.nodes[z.node_index].operation == Op::MULTIPLY);
 }
 
@@ -145,7 +144,7 @@ TEST_CASE("reduction ops store axis correctly", "[symbol]") {
   Symbol s = sum(x, 1, true);
   const Node &n = g.nodes[s.node_index];
   REQUIRE(n.operation == Op::SUM);
-  REQUIRE(n.axis == 1);
+  REQUIRE(n.axes.axis == 1);
   REQUIRE(n.keepdims == true);
 }
 
@@ -175,63 +174,64 @@ TEST_CASE("grad propagates through a chain", "[symbol]") {
   REQUIRE(g.nodes[y.node_index].requires_grad == true);
 }
 
-// ── Topological sort ──────────────────────────────────────────────────────────
+// ── Topological ordering via Compiler::compile ────────────────────────────────
+// Phase 3 of the compiler emits nodes in strict post-order (children before
+// parents), so we verify ordering by inspecting Program::nodes.
 
-TEST_CASE("topo sort of a single node returns that node", "[compiler]") {
+TEST_CASE("compiled single-node program has exactly one node", "[compiler]") {
   Graph g;
   Symbol x = g.variable();
-  Compiler c;
-  std::vector<uint32_t> topo = c.topological_sort(x);
-  REQUIRE(topo.size() == 1);
-  REQUIRE(topo[0] == x.node_index);
+  // Zero optimization passes so no constants are injected.
+  Program p = Compiler::compile(g, {x}, {x}, {.optimization_passes = 0});
+  REQUIRE(p.nodes.size() == 1);
+  REQUIRE(p.nodes[0].operation == Op::VARIABLE);
 }
 
-TEST_CASE("topo sort of a linear chain is in forward order", "[compiler]") {
+TEST_CASE("compiled linear chain places input before output", "[compiler]") {
   Graph g;
-  Symbol x  = g.variable();
-  Symbol ex = exp(x);
+  Symbol x   = g.variable();
+  Symbol ex  = exp(x);
   Symbol lex = log(ex);
-  Compiler c;
-  std::vector<uint32_t> topo = c.topological_sort(lex);
-  REQUIRE(topo.size() == 3);
-  // inputs must appear before outputs
-  auto pos = [&](uint32_t idx) {
-    return std::find(topo.begin(), topo.end(), idx) - topo.begin();
+  Program p  = Compiler::compile(g, {x}, {lex}, {.optimization_passes = 0});
+
+  // Find positions of x, exp(x), log(exp(x)) in the emitted program.
+  auto find_op = [&](Op op, uint32_t after = 0) -> uint32_t {
+    for (uint32_t i = after; i < p.nodes.size(); i++)
+      if (p.nodes[i].operation == op) return i;
+    return UINT32_MAX;
   };
-  REQUIRE(pos(x.node_index) < pos(ex.node_index));
-  REQUIRE(pos(ex.node_index) < pos(lex.node_index));
+
+  uint32_t xi   = find_op(Op::VARIABLE);
+  uint32_t exi  = find_op(Op::EXP);
+  uint32_t lexi = find_op(Op::LOG);
+
+  REQUIRE(xi   != UINT32_MAX);
+  REQUIRE(exi  != UINT32_MAX);
+  REQUIRE(lexi != UINT32_MAX);
+  REQUIRE(xi < exi);
+  REQUIRE(exi < lexi);
 }
 
-TEST_CASE("topo sort of a diamond visits shared node once", "[compiler]") {
+TEST_CASE("compiled diamond visits shared node once", "[compiler]") {
   Graph g;
   Symbol x  = g.variable();
   Symbol ex = exp(x);
   Symbol lx = log(x);
   Symbol s  = ex + lx;
-  Compiler c;
-  std::vector<uint32_t> topo = c.topological_sort(s);
-  // x, exp(x), log(x), sum — 4 nodes total, x appears once
-  REQUIRE(topo.size() == 4);
-  uint32_t x_count = 0;
-  for (uint32_t idx : topo)
-    if (idx == x.node_index) x_count++;
-  REQUIRE(x_count == 1);
+  Program p = Compiler::compile(g, {x}, {s}, {.optimization_passes = 0});
+
+  // Exactly one VARIABLE node.
+  uint32_t var_count = 0;
+  for (const Node &n : p.nodes)
+    if (n.operation == Op::VARIABLE) var_count++;
+  REQUIRE(var_count == 1);
 }
 
-TEST_CASE("topo sort places all inputs before their consumer", "[compiler]") {
+TEST_CASE("compiled program contains no ALIAS nodes", "[compiler]") {
   Graph g;
-  Symbol a = g.variable();
-  Symbol b = g.variable();
-  Symbol c_sym = g.variable();
-  Symbol s = (a + b) * c_sym;
-  Compiler c;
-  std::vector<uint32_t> topo = c.topological_sort(s);
-  auto pos = [&](uint32_t idx) {
-    return std::find(topo.begin(), topo.end(), idx) - topo.begin();
-  };
-  Symbol ab = a + b; // already created above, reuse index via operator+
-  // a, b before (a+b); (a+b) and c before *
-  REQUIRE(pos(a.node_index) < pos(s.node_index));
-  REQUIRE(pos(b.node_index) < pos(s.node_index));
-  REQUIRE(pos(c_sym.node_index) < pos(s.node_index));
+  Symbol x = g.variable();
+  Symbol y = x + g.constant(0.0f); // should be simplified away
+  Program p = Compiler::compile(g, {x}, {y});
+  for (const Node &n : p.nodes)
+    REQUIRE(n.operation != Op::ALIAS);
 }

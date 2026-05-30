@@ -1,10 +1,11 @@
 #pragma once
 #include "autograd/graph.hpp"
 #include "autograd/symbol.hpp"
-#include <unordered_map>
+#include <optional>
+#include <vector>
 
 namespace autograd {
 
-std::unordered_map<uint32_t, Symbol> backwards(const Symbol &output);
+std::vector<std::optional<Symbol>> backwards(const Symbol &output);
 
 } // namespace autograd

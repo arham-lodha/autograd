@@ -27,14 +27,8 @@ Symbol Graph::constant(const std::vector<float> &value) {
 }
 
 Symbol Graph::constant(float scalar) {
-  if (this->scalar_constants.contains(scalar)) {
-    return Symbol{.node_index = this->scalar_constants[scalar], .graph = this};
-  }
-
   Eigen::MatrixXf mat(1, 1);
   mat(0, 0) = scalar;
-
-  this->scalar_constants[scalar] = this->values.size();
 
   return constant(mat);
 }
