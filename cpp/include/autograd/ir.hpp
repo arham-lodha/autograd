@@ -38,17 +38,16 @@ struct Node {
   uint8_t keepdims : 1 = 0; // whether to keep reduced dims in REDUCE ops
   uint8_t _padding : 5 = 0; // padding
 
-  uint8_t _reserved[3] = {
-      0, 0,
+  uint8_t _reserved[7] = {
       0}; // reserved for future use; ensures sizeof(Node) is a multiple of 16
 };
 
 struct Program {
   std::vector<Node> nodes;
 
-  std::vector<uint32_t> inputs;        // flat CSR input-index list
-  std::vector<uint32_t> shapes;        // flat CSR shape data
-  std::vector<Tensor> values; // constant values
+  std::vector<uint32_t> inputs; // flat CSR input-index list
+  std::vector<uint32_t> shapes; // flat CSR shape data
+  std::vector<Tensor> values;   // constant values
 
   std::vector<uint32_t>
       input_nodes; // indices of input nodes (for multi-input graphs)
