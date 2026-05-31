@@ -1,11 +1,13 @@
 #include "autograd/symbol.hpp"
 #include <cassert>
+#include <span>
 
 namespace autograd {
 
-// ── Helper ────────────────────────────────────────────────────────────────────
+// ── Helper
+// ────────────────────────────────────────────────────────────────────
 
-static Symbol set_shape(Symbol result, const std::vector<int> &shape) {
+static Symbol set_shape(Symbol result, const std::span<int> &shape) {
   uint32_t shape_offset = result.graph->shapes.size();
   for (int s : shape)
     result.graph->shapes.push_back(s);
@@ -22,7 +24,8 @@ Symbol Symbol::operator[](int index) const {
   return graph->add_node(Op::GET_ITEM, {node_index}, index);
 }
 
-// ── Addition ──────────────────────────────────────────────────────────────────
+// ── Addition
+// ──────────────────────────────────────────────────────────────────
 
 Symbol operator+(Symbol lhs, Symbol rhs) {
   assert(lhs.graph == rhs.graph && "Symbols must belong to the same graph");
@@ -39,7 +42,8 @@ Symbol operator+(Symbol lhs, const Eigen::MatrixXf &rhs) {
 }
 Symbol operator+(const Eigen::MatrixXf &lhs, Symbol rhs) { return rhs + lhs; }
 
-// ── Multiplication ────────────────────────────────────────────────────────────
+// ── Multiplication
+// ────────────────────────────────────────────────────────────
 
 Symbol operator*(Symbol lhs, Symbol rhs) {
   assert(lhs.graph == rhs.graph && "Symbols must belong to the same graph");
@@ -56,7 +60,8 @@ Symbol operator*(Symbol lhs, const Eigen::MatrixXf &rhs) {
 }
 Symbol operator*(const Eigen::MatrixXf &lhs, Symbol rhs) { return rhs * lhs; }
 
-// ── Negation / Subtraction ────────────────────────────────────────────────────
+// ── Negation / Subtraction
+// ────────────────────────────────────────────────────
 
 Symbol operator-(Symbol x) {
   assert(x.graph != nullptr && "Symbol must be associated with a graph");
@@ -82,8 +87,9 @@ Symbol operator-(const Eigen::MatrixXf &lhs, Symbol rhs) {
   return rhs.graph->constant(lhs) - rhs;
 }
 
-// ── Division ──────────────────────────────────────────────────────────────────
-// No DIV op — mirrors Python: lhs / rhs = lhs * pow(rhs, -1)
+// ── Division
+// ────────────────────────────────────────────────────────────────── No DIV op
+// — mirrors Python: lhs / rhs = lhs * pow(rhs, -1)
 
 Symbol operator/(Symbol lhs, Symbol rhs) {
   assert(lhs.graph == rhs.graph && "Symbols must belong to the same graph");
@@ -104,7 +110,8 @@ Symbol operator/(const Eigen::MatrixXf &lhs, Symbol rhs) {
   return rhs.graph->constant(lhs) / rhs;
 }
 
-// ── Power ─────────────────────────────────────────────────────────────────────
+// ── Power
+// ─────────────────────────────────────────────────────────────────────
 
 Symbol pow(Symbol base, Symbol exp) {
   assert(base.graph == exp.graph && "Symbols must belong to the same graph");
@@ -119,7 +126,8 @@ Symbol pow(float base, Symbol exp) {
   return pow(exp.graph->constant(base), exp);
 }
 
-// ── Matmul ────────────────────────────────────────────────────────────────────
+// ── Matmul
+// ────────────────────────────────────────────────────────────────────
 
 Symbol matmul(Symbol lhs, Symbol rhs) {
   assert(lhs.graph == rhs.graph && "Symbols must belong to the same graph");
@@ -134,7 +142,8 @@ Symbol matmul(const Eigen::MatrixXf &lhs, Symbol rhs) {
   return matmul(rhs.graph->constant(lhs), rhs);
 }
 
-// ── Unary ─────────────────────────────────────────────────────────────────────
+// ── Unary
+// ─────────────────────────────────────────────────────────────────────
 
 Symbol exp(Symbol x) {
   assert(x.graph != nullptr && "Symbol must be associated with a graph");
@@ -165,7 +174,8 @@ Symbol transpose(Symbol x) {
   return x.graph->add_node(Op::TRANSPOSE, {x.node_index});
 }
 
-// ── Reductions ────────────────────────────────────────────────────────────────
+// ── Reductions
+// ────────────────────────────────────────────────────────────────
 
 Symbol sum(Symbol x, std::optional<int> axis, bool keepdims) {
   assert(x.graph != nullptr && "Symbol must be associated with a graph");
@@ -180,7 +190,8 @@ Symbol mean(Symbol x, std::optional<int> axis, bool keepdims) {
 Symbol variance(Symbol x, std::optional<int> axis, bool keepdims) {
   assert(x.graph != nullptr && "Symbol must be associated with a graph");
   int32_t ax = axis.value_or(-1);
-  return x.graph->add_node(Op::VARIANCE, {x.node_index}, ax, UINT32_MAX, keepdims);
+  return x.graph->add_node(Op::VARIANCE, {x.node_index}, ax, UINT32_MAX,
+                           keepdims);
 }
 Symbol softmax(Symbol x, std::optional<int> axis) {
   assert(x.graph != nullptr && "Symbol must be associated with a graph");
@@ -193,9 +204,10 @@ Symbol size(Symbol x, std::optional<int> axis) {
   return x.graph->add_node(Op::SIZE, {x.node_index}, ax);
 }
 
-// ── Shape ─────────────────────────────────────────────────────────────────────
+// ── Shape
+// ─────────────────────────────────────────────────────────────────────
 
-Symbol broadcast_to(Symbol x, std::vector<int> shape) {
+Symbol broadcast_to(Symbol x, std::span<int> shape) {
   assert(x.graph != nullptr && "Symbol must be associated with a graph");
   Symbol result = x.graph->add_node(Op::BROADCAST_TO, {x.node_index});
   return set_shape(result, shape);
@@ -206,7 +218,7 @@ Symbol broadcast_to_match(Symbol x, Symbol other) {
   return x.graph->add_node(Op::BROADCAST_TO_MATCH,
                            {x.node_index, other.node_index});
 }
-Symbol reshape(Symbol x, std::vector<int> shape) {
+Symbol reshape(Symbol x, std::span<int> shape) {
   assert(x.graph != nullptr && "Symbol must be associated with a graph");
   Symbol result = x.graph->add_node(Op::RESHAPE, {x.node_index});
   return set_shape(result, shape);
@@ -235,14 +247,17 @@ Symbol unbroadcast(Symbol x, Symbol other) {
   return x.graph->add_node(Op::UNBROADCAST, {x.node_index, other.node_index});
 }
 
-// ── Comparison ────────────────────────────────────────────────────────────────
+// ── Comparison
+// ────────────────────────────────────────────────────────────────
 
 Symbol operator==(Symbol lhs, Symbol rhs) {
   assert(lhs.graph == rhs.graph && "Symbols must belong to the same graph");
   assert(lhs.graph != nullptr && "Symbols must be associated with a graph");
   return lhs.graph->add_node(Op::EQUALS_TO, {lhs.node_index, rhs.node_index});
 }
-Symbol operator==(Symbol lhs, float rhs) { return lhs == lhs.graph->constant(rhs); }
+Symbol operator==(Symbol lhs, float rhs) {
+  return lhs == lhs.graph->constant(rhs);
+}
 Symbol operator==(float lhs, Symbol rhs) { return rhs == lhs; }
 
 Symbol operator>(Symbol lhs, Symbol rhs) {
@@ -251,8 +266,12 @@ Symbol operator>(Symbol lhs, Symbol rhs) {
   return lhs.graph->add_node(Op::GREATER_THAN,
                              {lhs.node_index, rhs.node_index});
 }
-Symbol operator>(Symbol lhs, float rhs) { return lhs > lhs.graph->constant(rhs); }
-Symbol operator>(float lhs, Symbol rhs) { return rhs.graph->constant(lhs) > rhs; }
+Symbol operator>(Symbol lhs, float rhs) {
+  return lhs > lhs.graph->constant(rhs);
+}
+Symbol operator>(float lhs, Symbol rhs) {
+  return rhs.graph->constant(lhs) > rhs;
+}
 
 Symbol operator>=(Symbol lhs, Symbol rhs) {
   assert(lhs.graph == rhs.graph && "Symbols must belong to the same graph");
@@ -260,16 +279,24 @@ Symbol operator>=(Symbol lhs, Symbol rhs) {
   return lhs.graph->add_node(Op::GREATER_THAN_OR_EQUAL,
                              {lhs.node_index, rhs.node_index});
 }
-Symbol operator>=(Symbol lhs, float rhs) { return lhs >= lhs.graph->constant(rhs); }
-Symbol operator>=(float lhs, Symbol rhs) { return rhs.graph->constant(lhs) >= rhs; }
+Symbol operator>=(Symbol lhs, float rhs) {
+  return lhs >= lhs.graph->constant(rhs);
+}
+Symbol operator>=(float lhs, Symbol rhs) {
+  return rhs.graph->constant(lhs) >= rhs;
+}
 
 Symbol operator<(Symbol lhs, Symbol rhs) {
   assert(lhs.graph == rhs.graph && "Symbols must belong to the same graph");
   assert(lhs.graph != nullptr && "Symbols must be associated with a graph");
   return lhs.graph->add_node(Op::LESS_THAN, {lhs.node_index, rhs.node_index});
 }
-Symbol operator<(Symbol lhs, float rhs) { return lhs < lhs.graph->constant(rhs); }
-Symbol operator<(float lhs, Symbol rhs) { return rhs.graph->constant(lhs) < rhs; }
+Symbol operator<(Symbol lhs, float rhs) {
+  return lhs < lhs.graph->constant(rhs);
+}
+Symbol operator<(float lhs, Symbol rhs) {
+  return rhs.graph->constant(lhs) < rhs;
+}
 
 Symbol operator<=(Symbol lhs, Symbol rhs) {
   assert(lhs.graph == rhs.graph && "Symbols must belong to the same graph");
@@ -277,10 +304,15 @@ Symbol operator<=(Symbol lhs, Symbol rhs) {
   return lhs.graph->add_node(Op::LESS_THAN_OR_EQUAL,
                              {lhs.node_index, rhs.node_index});
 }
-Symbol operator<=(Symbol lhs, float rhs) { return lhs <= lhs.graph->constant(rhs); }
-Symbol operator<=(float lhs, Symbol rhs) { return rhs.graph->constant(lhs) <= rhs; }
+Symbol operator<=(Symbol lhs, float rhs) {
+  return lhs <= lhs.graph->constant(rhs);
+}
+Symbol operator<=(float lhs, Symbol rhs) {
+  return rhs.graph->constant(lhs) <= rhs;
+}
 
-// ── Indexing ──────────────────────────────────────────────────────────────────
+// ── Indexing
+// ──────────────────────────────────────────────────────────────────
 
 Symbol get_item(Symbol x, int index) {
   assert(x.graph != nullptr && "Symbol must be associated with a graph");

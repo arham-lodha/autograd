@@ -44,6 +44,7 @@ enum class Op : uint16_t {
   EQUALS_TO = 37,
   GREATER_THAN_OR_EQUAL = 38,
   LESS_THAN_OR_EQUAL = 39,
+  ALIAS = 40,
 };
 
 } // namespace autograd

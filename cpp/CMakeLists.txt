@@ -26,9 +26,15 @@ FetchContent_MakeAvailable(Catch2)
 
 # ── Library ────────────────────────────────────────────────────────────────────
 add_library(autograd
+  src/tensor.cpp
   src/symbol.cpp
-  src/graph/graph.cpp
-  src/graph/compiler.cpp
+  src/graph.cpp
+  src/compiler/compiler.cpp
+  src/compiler/passes/algebra.cpp
+  src/compiler/passes/canonicalize.cpp
+  src/compiler/passes/compact.cpp
+  src/compiler/passes/extract.cpp
+  src/compiler/passes/fold.cpp
   src/backward.cpp
   src/executor.cpp
 )
