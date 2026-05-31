@@ -11,9 +11,17 @@ namespace autograd {
 
 // ── Utility helpers ────────────────────────────────────────────────────────
 
-uint32_t Compiler::resolve(uint32_t index) const {
-  while (working_nodes[index].operation == Op::ALIAS)
-    index = working_nodes[index].inputs[0];
+uint32_t Compiler::resolve(uint32_t index) {
+  uint32_t root = index;
+  while (working_nodes[root].operation == Op::ALIAS)
+    root = working_nodes[root].inputs[0];
+
+  while (working_nodes[index].operation == Op::ALIAS) {
+    uint32_t next = working_nodes[index].inputs[0];
+    working_nodes[index].inputs[0] = root;
+    index = next;
+  }
+
   return index;
 }
 
@@ -53,9 +61,9 @@ void Compiler::extract_subgraph(const std::vector<Symbol> &outputs) {
       // First visit: mark and push children so they are processed first.
       state[idx] = 1;
       for (uint32_t i = 0; i < node.input_count; i++) {
-        uint32_t child = i < 2
-            ? node.inputs[i]
-            : original_graph.inputs[node.input_pool_offset + (i - 2)];
+        uint32_t child =
+            i < 2 ? node.inputs[i]
+                  : original_graph.inputs[node.input_pool_offset + (i - 2)];
         if (state[child] == 0)
           stack.push(child);
         // Cycle detection is the graph builder's responsibility.
@@ -69,9 +77,9 @@ void Compiler::extract_subgraph(const std::vector<Symbol> &outputs) {
       n.input_pool_offset = static_cast<uint32_t>(working_inputs.size());
 
       for (uint32_t i = 0; i < n.input_count; i++) {
-        uint32_t orig_child = i < 2
-            ? node.inputs[i]
-            : original_graph.inputs[node.input_pool_offset + (i - 2)];
+        uint32_t orig_child =
+            i < 2 ? node.inputs[i]
+                  : original_graph.inputs[node.input_pool_offset + (i - 2)];
 
         uint32_t mapped = orig_to_working[orig_child];
         if (mapped == UINT32_MAX)

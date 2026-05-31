@@ -1,9 +1,9 @@
 #include "autograd/compiler.hpp"
 #include "autograd/ir.hpp"
 #include "autograd/ops.hpp"
+#include "autograd/tensor.hpp"
 #include <cmath>
 #include <cstdint>
-#include <stack>
 #include <unordered_set>
 #include <vector>
 
@@ -32,6 +32,10 @@ bool Compiler::fold_addition_multiplication() {
   bool changed = false;
   const uint32_t n = static_cast<uint32_t>(working_nodes.size());
 
+  std::vector<uint32_t> leaves;
+  std::vector<uint32_t> stk;
+  std::unordered_set<uint32_t> pushed;
+
   for (uint32_t i = 0; i < n; i++) {
     uint32_t ri = resolve(i);
     if (ri != i) continue; // already aliased away
@@ -43,23 +47,23 @@ bool Compiler::fold_addition_multiplication() {
     Op target = node.operation;
 
     // ── DFS to collect flat leaves ──────────────────────────────────────────
-    std::vector<uint32_t> leaves;
-    std::stack<uint32_t> stk;
-    std::unordered_set<uint32_t> pushed;
+    leaves.clear();
+    stk.clear();
+    pushed.clear();
 
     for (uint32_t j = 0; j < node.input_count; j++) {
       uint32_t inp = resolve(get_input(ri, j));
-      if (pushed.insert(inp).second) stk.push(inp);
+      if (pushed.insert(inp).second) stk.push_back(inp);
     }
 
     while (!stk.empty()) {
-      uint32_t cur = stk.top(); stk.pop();
+      uint32_t cur = stk.back(); stk.pop_back();
       const Node &cn = working_nodes[cur];
       if (cn.operation == target && !cn.retain) {
         // Absorb: push its inputs rather than recording it as a leaf.
         for (uint32_t j = 0; j < cn.input_count; j++) {
           uint32_t inp = resolve(get_input(cur, j));
-          if (pushed.insert(inp).second) stk.push(inp);
+          if (pushed.insert(inp).second) stk.push_back(inp);
         }
       } else {
         leaves.push_back(cur);
@@ -133,8 +137,9 @@ bool Compiler::fold_constants() {
     // Only fold scalar (1×1) constants for now.
     bool all_scalar = true;
     for (uint32_t idx : inp) {
-      const Eigen::MatrixXf &m = working_values[working_nodes[idx].value_index];
-      if (m.rows() != 1 || m.cols() != 1) { all_scalar = false; break; }
+      if (!working_values[working_nodes[idx].value_index].is_scalar()) {
+        all_scalar = false; break;
+      }
     }
     if (!all_scalar) continue;
 
@@ -183,10 +188,8 @@ bool Compiler::fold_constants() {
     }
 
     if (const_node == UINT32_MAX) {
-      Eigen::MatrixXf m(1, 1);
-      m(0, 0) = result;
       uint32_t val_idx = static_cast<uint32_t>(working_values.size());
-      working_values.push_back(m);
+      working_values.push_back(Tensor(result));
 
       Node c{};
       c.operation   = Op::CONSTANT;

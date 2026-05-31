@@ -1,12 +1,13 @@
 #include "autograd/graph.hpp"
 #include "autograd/symbol.hpp"
+#include "autograd/tensor.hpp"
 #include <cstdint>
 
 namespace autograd {
 
 Symbol Graph::variable() { return add_node(Op::VARIABLE, {}); }
 Symbol Graph::placeholder() { return add_node(Op::PLACEHOLDER, {}); }
-Symbol Graph::constant(const Eigen::MatrixXf &value) {
+Symbol Graph::constant(const Tensor &value) {
   uint32_t node_index = nodes.size();
   uint32_t value_index = values.size();
 
@@ -20,17 +21,16 @@ Symbol Graph::constant(const Eigen::MatrixXf &value) {
   return Symbol{.node_index = node_index, .graph = this};
 }
 
+Symbol Graph::constant(const Eigen::MatrixXf &value) {
+  return constant(Tensor(value));
+}
+
 Symbol Graph::constant(const std::vector<float> &value) {
-  Eigen::MatrixXf mat =
-      Eigen::Map<const Eigen::MatrixXf>(value.data(), value.size(), 1);
-  return constant(mat);
+  return constant(Tensor(static_cast<uint32_t>(value.size()), 1, value.data()));
 }
 
 Symbol Graph::constant(float scalar) {
-  Eigen::MatrixXf mat(1, 1);
-  mat(0, 0) = scalar;
-
-  return constant(mat);
+  return constant(Tensor(scalar));
 }
 
 Symbol Graph::add_node(Op op, std::initializer_list<uint32_t> node_inputs,

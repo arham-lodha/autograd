@@ -2,7 +2,7 @@
 
 #include "autograd/ir.hpp"
 #include "autograd/ops.hpp"
-#include <Eigen/Dense>
+#include "autograd/tensor.hpp"
 #include <cstdint>
 #include <initializer_list>
 #include <vector>
@@ -18,11 +18,12 @@ public:
 
   std::vector<Node> nodes;
   std::vector<uint32_t> inputs;        // flat CSR input-index list
-  std::vector<Eigen::MatrixXf> values; // constant values
+  std::vector<Tensor> values; // constant values
   std::vector<int> shapes;             // flat CSR shape data
 
   Symbol variable();
-  Symbol constant(const Eigen::MatrixXf &value);
+  Symbol constant(const Tensor &value);
+  Symbol constant(const Eigen::MatrixXf &value); // compatibility wrapper
   Symbol constant(const std::vector<float> &value);
   Symbol constant(float scalar);
   Symbol placeholder();

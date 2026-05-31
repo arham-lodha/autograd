@@ -1,8 +1,8 @@
 #pragma once
 
-#include "Eigen/Dense"
 #include "autograd/graph.hpp"
 #include "autograd/ir.hpp"
+#include "autograd/tensor.hpp"
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -10,7 +10,13 @@
 namespace autograd {
 
 // Well-known scalar constants pre-populated into working_values on demand.
-enum : uint32_t { K_ONE = 0, K_ZERO = 1, K_NEG_ONE = 2, K_HALF = 3, K_COUNT = 4 };
+enum : uint32_t {
+  K_ONE = 0,
+  K_ZERO = 1,
+  K_NEG_ONE = 2,
+  K_HALF = 3,
+  K_COUNT = 4
+};
 
 struct CompilerConfig {
   int optimization_passes = 10;
@@ -34,10 +40,12 @@ private:
   // ── Phase 1 / Phase 2 working buffers ────────────────────────────────────
   // All indices inside working_nodes refer to positions within this array.
   // Passes append new nodes via push_back; they never remove or reorder.
-  std::vector<Node>            working_nodes;
-  std::vector<uint32_t>        working_inputs;  // CSR pool for n-ary ops (>2 inputs)
-  std::vector<Eigen::MatrixXf> working_values;  // constants, including well-knowns
-  std::vector<uint32_t>        working_shapes;  // CSR shape data for RESHAPE/BROADCAST_TO
+  std::vector<Node> working_nodes;
+  std::vector<uint32_t> working_inputs; // CSR pool for n-ary ops (>2 inputs)
+  std::vector<Tensor>
+      working_values; // constants, including well-knowns
+  std::vector<uint32_t>
+      working_shapes; // CSR shape data for RESHAPE/BROADCAST_TO
 
   // Indices into working_nodes for the requested outputs.
   std::vector<uint32_t> working_outputs;
@@ -67,7 +75,7 @@ private:
   // ── Utilities ─────────────────────────────────────────────────────────────
 
   // Chase Op::ALIAS links; returns the index of the real underlying node.
-  uint32_t resolve(uint32_t index) const;
+  uint32_t resolve(uint32_t index);
 
   // Return the working-space input index for slot i of node at working_idx.
   uint32_t get_input(uint32_t working_idx, uint32_t i) const;
@@ -78,7 +86,7 @@ private:
 
   // True iff working_nodes[resolve(idx)] is a CONSTANT whose value is a 1×1
   // matrix equal to `expected`.
-  bool is_scalar_const(uint32_t idx, float expected) const;
+  bool is_scalar_const(uint32_t idx, float expected);
 
   // Alias working_nodes[target] to working_nodes[resolve(source)].
   // Sets target's operation to ALIAS and inputs[0] to the resolved source.

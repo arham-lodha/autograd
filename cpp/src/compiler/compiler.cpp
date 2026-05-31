@@ -3,7 +3,7 @@
 #include "autograd/ir.hpp"
 #include "autograd/ops.hpp"
 #include "autograd/symbol.hpp"
-#include <Eigen/Dense>
+#include "autograd/tensor.hpp"
 #include <cstdint>
 
 namespace autograd {
@@ -13,8 +13,7 @@ Compiler::Compiler(const Graph &graph, CompilerConfig cfg)
   well_known_slots.fill(UINT32_MAX);
 }
 
-Program Compiler::compile(const Graph &graph,
-                          const std::vector<Symbol> &inputs,
+Program Compiler::compile(const Graph &graph, const std::vector<Symbol> &inputs,
                           const std::vector<Symbol> &outputs,
                           CompilerConfig config) {
   Compiler c(graph, config);
@@ -24,6 +23,12 @@ Program Compiler::compile(const Graph &graph,
 }
 
 void Compiler::run_optimization_loop() {
+  // These are all heuristics:
+  // canonical basically adds at most 2 nodes,
+  working_values.reserve(working_values.size() * 2);
+  working_inputs.reserve(working_inputs.size() * 2);
+  working_values.reserve(K_COUNT + working_values.size() + 8);
+
   for (int i = 0; i < config.optimization_passes; i++) {
     bool changed = false;
     changed |= canonicalize();
@@ -36,18 +41,16 @@ void Compiler::run_optimization_loop() {
   }
 }
 
-// ── Shared utilities ──────────────────────────────────────────────────────────
+// ── Shared utilities
+// ──────────────────────────────────────────────────────────
 
 uint32_t Compiler::ensure_well_known(uint32_t slot) {
   if (well_known_slots[slot] != UINT32_MAX)
     return well_known_slots[slot];
 
   constexpr float kValues[K_COUNT] = {1.0f, 0.0f, -1.0f, 0.5f};
-  Eigen::MatrixXf m(1, 1);
-  m(0, 0) = kValues[slot];
-
   uint32_t val_idx = static_cast<uint32_t>(working_values.size());
-  working_values.push_back(m);
+  working_values.push_back(Tensor(kValues[slot]));
 
   Node c{};
   c.operation = Op::CONSTANT;
@@ -59,13 +62,13 @@ uint32_t Compiler::ensure_well_known(uint32_t slot) {
   return node_idx;
 }
 
-bool Compiler::is_scalar_const(uint32_t idx, float expected) const {
+bool Compiler::is_scalar_const(uint32_t idx, float expected) {
   idx = resolve(idx);
   const Node &n = working_nodes[idx];
   if (n.operation != Op::CONSTANT)
     return false;
-  const Eigen::MatrixXf &m = working_values[n.value_index];
-  return m.rows() == 1 && m.cols() == 1 && m(0, 0) == expected;
+  const Tensor &t = working_values[n.value_index];
+  return t.is_scalar() && t(0, 0) == expected;
 }
 
 void Compiler::alias(uint32_t target, uint32_t source) {

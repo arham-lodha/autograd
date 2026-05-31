@@ -30,7 +30,7 @@ TEST_CASE("matrix constant stores correct shape and values", "[graph]") {
   Eigen::MatrixXf m(2, 3);
   m << 1, 2, 3, 4, 5, 6;
   Symbol c = g.constant(m);
-  const Eigen::MatrixXf &stored = g.values[g.nodes[c.node_index].value_index];
+  const autograd::Tensor &stored = g.values[g.nodes[c.node_index].value_index];
   REQUIRE(stored.rows() == 2);
   REQUIRE(stored.cols() == 3);
   REQUIRE(stored(0, 0) == Catch::Approx(1.0f));

@@ -1,6 +1,6 @@
 #pragma once
 #include "autograd/ops.hpp"
-#include <Eigen/Dense>
+#include "autograd/tensor.hpp"
 #include <cstdint>
 #include <vector>
 
@@ -48,7 +48,7 @@ struct Program {
 
   std::vector<uint32_t> inputs;        // flat CSR input-index list
   std::vector<uint32_t> shapes;        // flat CSR shape data
-  std::vector<Eigen::MatrixXf> values; // constant values
+  std::vector<Tensor> values; // constant values
 
   std::vector<uint32_t>
       input_nodes; // indices of input nodes (for multi-input graphs)
