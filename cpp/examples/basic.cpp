@@ -56,12 +56,12 @@ static void test_tensor_sbo() {
   CHECK(scalar.is_scalar(),        "scalar.is_scalar()");
   CHECK(near(scalar(0,0), 3.14f),  "scalar value correct");
 
-  Tensor edge(2, 4);   // 8 floats — exactly fills kInline
+  Tensor edge(4, 6);   // 24 floats — exactly fills kInline
   edge.map().fill(7.0f);
-  CHECK(is_inline(edge),           "2×4 tensor inline (kInline=8)");
+  CHECK(is_inline(edge),           "4×6 tensor inline (kInline=24)");
 
-  Tensor large(3, 3);  // 9 floats — must heap-allocate
-  CHECK(!is_inline(large),         "3×3 tensor heap-allocated");
+  Tensor large(5, 5);  // 25 floats — must heap-allocate
+  CHECK(!is_inline(large),         "5×5 tensor heap-allocated");
 
   Tensor copy = edge;
   copy.map().fill(99.0f);

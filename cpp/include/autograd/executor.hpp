@@ -14,9 +14,10 @@ public:
   // Run a compiled Program.  Returns one Tensor per output_node, in order.
   // feed maps input_node indices (from Program::input_nodes) to runtime values.
   std::vector<Tensor> forward(const Program &prog,
-                              std::span<const Tensor> feed) const;
+                              std::span<const Tensor> feed);
 
 private:
+  std::vector<Tensor> values;
   // Dispatch a single node given its already-evaluated inputs.
   Tensor eval_node(const Program &prog, uint32_t node_idx,
                    std::vector<Tensor> &values) const;
